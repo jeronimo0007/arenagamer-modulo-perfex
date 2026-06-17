@@ -1,0 +1,68 @@
+/* ArenaGamer Module Styles */
+
+.arenagamer-card {
+    border-left: 3px solid #7c3aed;
+    margin-bottom: 15px;
+}
+
+.arenagamer-card .panel-heading {
+    background-color: #f8f7ff;
+}
+
+.arenagamer-badge-tournament {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.arenagamer-badge-live {
+    background-color: #ef4444;
+    color: #fff;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+.arenagamer-match-vs {
+    font-weight: bold;
+    color: #7c3aed;
+    font-size: 14px;
+}
+
+.arenagamer-stat-number {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+/* Bracket visualization */
+.arenagamer-bracket {
+    overflow-x: auto;
+    padding: 20px;
+}
+
+.arenagamer-bracket-round {
+    display: inline-block;
+    vertical-align: top;
+    margin-right: 30px;
+}
+
+.arenagamer-bracket-match {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    min-width: 200px;
+}
+
+.arenagamer-bracket-match.winner {
+    border-left: 3px solid #22c55e;
+}
