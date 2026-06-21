@@ -22,7 +22,8 @@
                                 <th>Ação</th>
                                 <th>Entidade</th>
                                 <th>ID Entidade</th>
-                                <th>Usuário</th>
+                                <th>Ator</th>
+                                <th>Detalhes</th>
                                 <th>IP</th>
                                 <th>Data</th>
                             </tr>
@@ -34,20 +35,29 @@
                                 <td><span class="label label-default"><?php echo htmlspecialchars($audit['action'] ?? ''); ?></span></td>
                                 <td><?php echo htmlspecialchars($audit['entityType'] ?? ''); ?></td>
                                 <td><?php echo $audit['entityId'] ?? '—'; ?></td>
-                                <td><?php echo $audit['userId'] ?? '—'; ?></td>
+                                <td>
+                                    <?php
+                                    $actor = ($audit['actorType'] ?? '') . ' #' . ($audit['actorId'] ?? '—');
+                                    echo htmlspecialchars($actor);
+                                    ?>
+                                </td>
+                                <td><?php echo htmlspecialchars(arenagamer_audit_display_message($audit)); ?></td>
                                 <td><code><?php echo htmlspecialchars($audit['ipAddress'] ?? ''); ?></code></td>
-                                <td><?php echo isset($audit['createdAt']) ? date('d/m/Y H:i:s', strtotime($audit['createdAt'])) : '—'; ?></td>
+                                <td><?php echo arenagamer_format_date($audit['createdAt'] ?? '', 'd/m/Y H:i:s'); ?></td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
 
-                <?php if (isset($response['data']['totalPages']) && $response['data']['totalPages'] > 1): ?>
+                <?php
+                $auditPagination = arenagamer_pagination_meta($response ?? null);
+                if ($auditPagination['totalPages'] > 1):
+                ?>
                 <div class="text-center">
                     <ul class="pagination">
-                        <?php for ($i = 0; $i < $response['data']['totalPages']; $i++): ?>
-                        <li class="<?php echo ($response['data']['number'] == $i) ? 'active' : ''; ?>">
+                        <?php for ($i = 0; $i < $auditPagination['totalPages']; $i++): ?>
+                        <li class="<?php echo ($auditPagination['number'] == $i) ? 'active' : ''; ?>">
                             <a href="<?php echo admin_url('arenagamer/audits?page=' . $i); ?>"><?php echo $i + 1; ?></a>
                         </li>
                         <?php endfor; ?>
@@ -62,6 +72,4 @@
         </div>
     </div>
 </div>
-<?php init_foot(); ?>
-</body>
-</html>
+<?php init_tail(); ?>

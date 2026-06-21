@@ -9,7 +9,7 @@ $pagination = arenagamer_pagination_meta($response ?? null);
         <div class="row">
             <div class="col-md-12">
                 <h4 class="tw-font-semibold tw-text-lg tw-text-neutral-700">
-                    <i class="fa fa-users"></i> ArenaGamer - Usuários (Staff e Contatos)
+                    <i class="fa fa-address-book"></i> ArenaGamer - Contatos
                 </h4>
                 <hr />
             </div>
@@ -40,20 +40,20 @@ $pagination = arenagamer_pagination_meta($response ?? null);
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($items as $user): ?>
+                            <?php foreach ($items as $contact): ?>
                             <tr>
-                                <td><?php echo $user['id']; ?></td>
-                                <td><?php echo arenagamer_user_type_badge($user['userType'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars(trim(($user['firstName'] ?? '') . ' ' . ($user['lastName'] ?? ''))); ?></td>
-                                <td><?php echo htmlspecialchars($user['email'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($user['phoneNumber'] ?? '—'); ?></td>
-                                <td><?php echo arenagamer_role_badge($user['role'] ?? ''); ?></td>
+                                <td><?php echo $contact['id']; ?></td>
+                                <td><?php echo arenagamer_user_type_badge($contact['userType'] ?? ''); ?></td>
+                                <td><?php echo htmlspecialchars(trim(($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''))); ?></td>
+                                <td><?php echo htmlspecialchars($contact['email'] ?? ''); ?></td>
+                                <td><?php echo htmlspecialchars($contact['phoneNumber'] ?? '—'); ?></td>
+                                <td><?php echo arenagamer_role_badge($contact['role'] ?? ''); ?></td>
                                 <td>
-                                    <?php echo !empty($user['emailVerified']) ?
+                                    <?php echo !empty($contact['emailVerified']) ?
                                         '<span class="text-success"><i class="fa fa-check"></i></span>' :
                                         '<span class="text-danger"><i class="fa fa-times"></i></span>'; ?>
                                 </td>
-                                <td><?php echo $user['clientUserId'] ?? '—'; ?></td>
+                                <td><?php echo $contact['clientUserId'] ?? '—'; ?></td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -65,7 +65,7 @@ $pagination = arenagamer_pagination_meta($response ?? null);
                     <ul class="pagination">
                         <?php for ($i = 0; $i < $pagination['totalPages']; $i++): ?>
                         <li class="<?php echo ($pagination['number'] == $i) ? 'active' : ''; ?>">
-                            <a href="<?php echo admin_url('arenagamer/users?page=' . $i); ?>"><?php echo $i + 1; ?></a>
+                            <a href="<?php echo admin_url('arenagamer/contacts?page=' . $i); ?>"><?php echo $i + 1; ?></a>
                         </li>
                         <?php endfor; ?>
                     </ul>
@@ -73,7 +73,7 @@ $pagination = arenagamer_pagination_meta($response ?? null);
                 <?php endif; ?>
 
                 <?php else: ?>
-                <p class="text-muted text-center">Nenhum usuário encontrado.</p>
+                <p class="text-muted text-center">Nenhum contato encontrado.</p>
                 <?php endif; ?>
             </div>
         </div>

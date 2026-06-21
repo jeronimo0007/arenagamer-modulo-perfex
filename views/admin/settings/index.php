@@ -22,8 +22,14 @@
                             <label for="api_url">URL da API</label>
                             <input type="url" name="api_url" id="api_url" class="form-control"
                                    value="<?php echo get_option('arenagamer_api_url'); ?>"
-                                   placeholder="http://localhost:8080/api/v1" required>
-                            <small class="text-muted">URL base da ArenaGamer API (sem trailing slash)</small>
+                                   placeholder="http://localhost:8080" required>
+                            <small class="text-muted">URL do servidor (conforme Swagger). O módulo adiciona automaticamente <code>/api/v1</code>.</small>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="fa fa-info-circle"></i>
+                            Use credenciais de um usuário <strong>STAFF</strong> com role <strong>ADMIN</strong> na API.
+                            Usuários MANAGER conseguem fazer login, mas recebem erro 403 nos endpoints <code>/admin/*</code>.
                         </div>
 
                         <div class="form-group">
@@ -37,6 +43,89 @@
                             <label for="admin_password">Senha do Admin</label>
                             <input type="password" name="admin_password" id="admin_password" class="form-control"
                                    placeholder="Deixe em branco para manter a senha atual">
+                        </div>
+
+                        <hr />
+
+                        <h4 class="tw-font-semibold mtop15 mbot15">Preços de criação de torneio</h4>
+                        <p class="text-muted">
+                            O torneio padrão inclui até a quantidade de participantes configurada abaixo.
+                            Participantes acima desse limite são cobrados como avulsos.
+                        </p>
+
+                        <?php
+                        $pricing = $tournament_pricing ?? arenagamer_tournament_pricing_local();
+                        $includedDefault = (int) ($pricing['includedParticipants'] ?? 8);
+                        $basePrice = (float) ($pricing['baseTournamentPrice'] ?? 0);
+                        $extraPrice = (float) ($pricing['extraParticipantPrice'] ?? 0);
+                        ?>
+
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="tournament_base_price">Valor do torneio padrão (créditos)</label>
+                                    <input type="number" step="0.01" min="0" name="tournament_base_price" id="tournament_base_price"
+                                           class="form-control" value="<?php echo htmlspecialchars(number_format($basePrice, 2, '.', '')); ?>" required>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="included_participants">Participantes incluídos</label>
+                                    <input type="number" min="2" name="included_participants" id="included_participants"
+                                           class="form-control" value="<?php echo $includedDefault; ?>" required>
+                                    <small class="text-muted">Ex.: 8 participantes já inclusos no valor padrão.</small>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="extra_participant_price">Valor por participante avulso (créditos)</label>
+                                    <input type="number" step="0.01" min="0" name="extra_participant_price" id="extra_participant_price"
+                                           class="form-control" value="<?php echo htmlspecialchars(number_format($extraPrice, 2, '.', '')); ?>" required>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <strong>Exemplo:</strong> com <?php echo $includedDefault; ?> incluídos,
+                            torneio para 12 participantes = <?php echo arenagamer_format_credits(arenagamer_calculate_tournament_creation_cost(12, $pricing)); ?>.
+                        </div>
+
+                        <hr />
+
+                        <h4 class="tw-font-semibold mtop15 mbot15">Regras de times</h4>
+                        <?php
+                        $teamSettings = is_array($team_settings ?? null) ? $team_settings : arenagamer_team_settings_local();
+                        $maxOwned = (int) ($teamSettings['maxOwnedTeamsPerContact'] ?? 1);
+                        $maxParticipated = (int) ($teamSettings['maxParticipatedTeamsPerContact'] ?? 3);
+                        $maxTournaments = $teamSettings['maxTournamentsPerTeam'] ?? null;
+                        $unlimitedTournaments = !empty($teamSettings['unlimitedTournamentsPerTeam']) || $maxTournaments === null;
+                        ?>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="max_owned_teams">Times como dono por contato</label>
+                                    <input type="number" min="1" name="max_owned_teams" id="max_owned_teams" class="form-control" value="<?php echo $maxOwned; ?>" required>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="max_participated_teams">Participação em times por contato</label>
+                                    <input type="number" min="1" name="max_participated_teams" id="max_participated_teams" class="form-control" value="<?php echo $maxParticipated; ?>" required>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="max_tournaments_per_team">Torneios por time</label>
+                                    <input type="number" min="1" name="max_tournaments_per_team" id="max_tournaments_per_team" class="form-control"
+                                           value="<?php echo $maxTournaments !== null ? (int) $maxTournaments : ''; ?>"
+                                           <?php echo $unlimitedTournaments ? 'disabled' : ''; ?>>
+                                    <label class="mtop5">
+                                        <input type="checkbox" name="unlimited_tournaments_per_team" value="1" id="unlimited_tournaments_per_team"
+                                            <?php echo $unlimitedTournaments ? 'checked' : ''; ?>>
+                                        Ilimitado
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <hr />
@@ -99,7 +188,7 @@
         </div>
     </div>
 </div>
-<?php init_foot(); ?>
+<?php init_tail(); ?>
 <script>
 function testApiConnection() {
     var btn = $('#btn-test');
@@ -119,6 +208,11 @@ function testApiConnection() {
         btn.prop('disabled', false).html('<i class="fa fa-plug"></i> Testar Conexão');
     });
 }
+
+$('#unlimited_tournaments_per_team').on('change', function () {
+    $('#max_tournaments_per_team').prop('disabled', this.checked);
+    if (this.checked) {
+        $('#max_tournaments_per_team').val('');
+    }
+});
 </script>
-</body>
-</html>

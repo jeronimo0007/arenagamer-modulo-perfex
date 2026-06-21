@@ -66,3 +66,14 @@
 .arenagamer-bracket-match.winner {
     border-left: 3px solid #22c55e;
 }
+
+.arenagamer-buy-credits-block {
+    border-top: 1px solid #e5e5e5;
+    padding-top: 15px;
+}
+
+.arenagamer-submenu-credits-balance {
+    font-weight: 600;
+    color: #7c3aed;
+    padding: 0 8px;
+}

@@ -1,0 +1,1 @@
+{"success":false,"code":"UNAUTHORIZED","message":"Autenticação necessária. Envie o token JWT no header Authorization: Bearer <token>","status":401,"timestamp":"2026-06-19T23:15:14.867253900Z"}

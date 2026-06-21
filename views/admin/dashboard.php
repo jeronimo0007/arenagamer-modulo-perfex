@@ -17,9 +17,9 @@
                 <div class="panel_s">
                     <div class="panel-body">
                         <h3 class="text-success bold">
-                            <?php echo isset($tournaments['data']['totalElements']) ? $tournaments['data']['totalElements'] : '—'; ?>
+                            <?php echo arenagamer_pagination_total_elements($tournaments ?? null) ?: '—'; ?>
                         </h3>
-                        <span class="text-muted">Torneios</span>
+                        <span class="text-muted">Torneios gerenciáveis</span>
                     </div>
                 </div>
             </div>
@@ -27,7 +27,7 @@
                 <div class="panel_s">
                     <div class="panel-body">
                         <h3 class="text-info bold">
-                            <?php echo isset($users['data']['totalElements']) ? $users['data']['totalElements'] : '—'; ?>
+                            <?php echo arenagamer_pagination_total_elements($users ?? null) ?: '—'; ?>
                         </h3>
                         <span class="text-muted">Usuários</span>
                     </div>
@@ -36,16 +36,29 @@
             <div class="col-md-3">
                 <div class="panel_s">
                     <div class="panel-body">
-                        <h3 class="text-warning bold">—</h3>
-                        <span class="text-muted">Partidas Hoje</span>
+                        <h3 class="text-warning bold">
+                            <?php
+                            $wallet = arenagamer_api_data($wallet ?? null);
+                            echo $wallet && isset($wallet['availableBalance'])
+                                ? arenagamer_format_credits($wallet['availableBalance'])
+                                : '—';
+                            ?>
+                        </h3>
+                        <span class="text-muted">Saldo Disponível</span>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="panel_s">
                     <div class="panel-body">
-                        <h3 class="text-danger bold">—</h3>
-                        <span class="text-muted">Receita (créditos)</span>
+                        <h3 class="text-danger bold">
+                            <?php
+                            echo $wallet && isset($wallet['heldBalance'])
+                                ? arenagamer_format_credits($wallet['heldBalance'])
+                                : '—';
+                            ?>
+                        </h3>
+                        <span class="text-muted">Saldo Retido</span>
                     </div>
                 </div>
             </div>
@@ -75,9 +88,9 @@
                                     <?php foreach ($tournaments['data']['content'] as $t): ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($t['name']); ?></td>
-                                        <td><span class="label label-default"><?php echo $t['type']; ?></span></td>
+                                        <td><span class="label label-default"><?php echo htmlspecialchars(arenagamer_tournament_type_label($t['type'] ?? '')); ?></span></td>
                                         <td><?php echo arenagamer_status_badge($t['status']); ?></td>
-                                        <td><?php echo isset($t['participantsLimit']) ? $t['participantsLimit'] : '—'; ?></td>
+                                        <td><?php echo isset($t['participantCount']) ? $t['participantCount'] . ' / ' . ($t['participantsLimit'] ?? '—') : (isset($t['participantsLimit']) ? $t['participantsLimit'] : '—'); ?></td>
                                         <td>
                                             <a href="<?php echo admin_url('arenagamer/tournament_detail/' . $t['slug']); ?>"
                                                class="btn btn-default btn-xs">
@@ -103,7 +116,7 @@
                         <h4 class="panel-title">Ações Rápidas</h4>
                     </div>
                     <div class="panel-body">
-                        <a href="<?php echo admin_url('arenagamer/tournaments'); ?>" class="btn btn-primary btn-block mtop5">
+                        <a href="<?php echo admin_url('arenagamer/tournaments?view=my-managed'); ?>" class="btn btn-primary btn-block mtop5">
                             <i class="fa fa-trophy"></i> Gerenciar Torneios
                         </a>
                         <a href="<?php echo admin_url('arenagamer/users'); ?>" class="btn btn-info btn-block mtop5">
@@ -135,7 +148,7 @@
         </div>
     </div>
 </div>
-<?php init_foot(); ?>
+<?php init_tail(); ?>
 <script>
 function testApiConnection() {
     $('#api-status').html('<i class="fa fa-spinner fa-spin"></i>');
@@ -151,5 +164,3 @@ function testApiConnection() {
     });
 }
 </script>
-</body>
-</html>
