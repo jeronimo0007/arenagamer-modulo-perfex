@@ -6,7 +6,6 @@ $formAction = $isEdit
     ? arenagamer_client_url('tournament_edit/' . $t['slug'])
     : arenagamer_client_url('tournament');
 $formId = $isEdit ? 'tournament-edit-form' : 'tournament-create-form';
-$presetsData = arenagamer_api_data($presets ?? null, []);
 $authUser = $auth_user ?? null;
 $currentPlan = is_array($current_plan ?? null) ? $current_plan : arenagamer_contact_plan($authUser);
 $pricing = $tournament_pricing ?? arenagamer_tournament_pricing_local();
@@ -23,17 +22,16 @@ $defaultLimit = (int) ($t['participantsLimit'] ?? $includedForBilling);
 $planIncludedParticipants = arenagamer_plan_free_max_participants($currentPlan);
 $allowsEntryFeeByPlan = arenagamer_plan_allows_entry_fee($currentPlan);
 $entryFeeMinCreationCost = arenagamer_entry_fee_min_creation_cost();
-$allowsEntryFee = $allowsEntryFeeByPlan || arenagamer_creation_cost_allows_entry_fee($costBreakdown['total'] ?? 0);
+$allowsEntryFee = $allowsEntryFeeByPlan || arenagamer_tournament_allows_entry_fee($currentPlan, $defaultLimit, $pricing);
 $tournamentsUsed = (int) ($costBreakdown['tournamentsUsed'] ?? 0);
 $freeTournamentsMonth = (int) ($costBreakdown['freeTournamentsMonth'] ?? 0);
-$maxTournamentsMonth = (int) ($costBreakdown['maxTournamentsMonth'] ?? 0);
 $tournamentLimitReached = !empty($costBreakdown['tournamentLimitReached']);
 $hasFreeTournamentSlot = !empty($costBreakdown['hasFreeTournamentSlot']);
 $planParticipantBenefitsActive = !empty($costBreakdown['planParticipantBenefitsActive']);
 $standardIncludedForBilling = (int) ($costBreakdown['standardIncludedParticipants'] ?? arenagamer_pricing_included_participants($pricing));
 $walletData = is_array($wallet ?? null) ? $wallet : [];
 $walletAvailable = (float) ($walletData['availableBalance'] ?? 0);
-$tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth - $tournamentsUsed) : 0;
+$tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
 ?>
 <div class="panel_s">
     <div class="panel-body">
@@ -58,7 +56,7 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
             <?php echo htmlspecialchars($currentPlan['name'] ?? '—'); ?>
             <?php echo arenagamer_plan_status_badge($currentPlan); ?>
 
-            <?php if ($maxTournamentsMonth > 0): ?>
+            <?php if ($freeTournamentsMonth > 0): ?>
                 <?php if ($tournamentLimitReached): ?>
             <br>
             <span class="text-danger"><i class="fa fa-exclamation-circle"></i>
@@ -67,7 +65,7 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
             </span>
                 <?php else: ?>
             <br>
-            Torneios inclusos consumidos: <strong><?php echo $tournamentsUsed; ?> de <?php echo $maxTournamentsMonth; ?></strong>
+            Torneios criados inclusos no plano: <strong><?php echo $tournamentsUsed; ?> de <?php echo $freeTournamentsMonth; ?></strong>
                     <?php if ($tournamentsRemaining > 0): ?>
             <br>
             <span class="text-muted">Restam <?php echo $tournamentsRemaining; ?> torneio(s) incluso(s) neste mês.</span>
@@ -80,149 +78,82 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
             Participantes inclusos no plano (sem custo avulso): <strong><?php echo $planIncludedParticipants; ?></strong>
             <br>
             <?php endif; ?>
-            Preço padrão: taxa base <?php echo arenagamer_format_credits($basePrice); ?>
-            + <?php echo arenagamer_format_credits($extraPrice); ?> por participante acima de <?php echo $includedForBilling; ?>.
             <br>
             Taxa de inscrição:
-            <strong id="entry-fee-plan-status">
-                <?php if ($allowsEntryFeeByPlan): ?>
-                permitida pelo plano
-                <?php elseif (arenagamer_creation_cost_allows_entry_fee($costBreakdown['total'] ?? 0)): ?>
-                liberada (a partir de <?php echo arenagamer_format_credits($entryFeeMinCreationCost); ?>)
-                <?php else: ?>
-                liberada a partir de <?php echo arenagamer_format_credits($entryFeeMinCreationCost); ?> na criação
-                <?php endif; ?>
-            </strong>
+            <strong id="entry-fee-plan-status"><?php echo $allowsEntryFee ? 'liberada' : 'não liberada'; ?></strong>
+            <?php if (!$allowsEntryFeeByPlan && $extraPrice > 0): ?>
+            <button type="button" class="btn btn-default btn-xs mleft5" id="unlock-entry-fee-btn" style="display:none;"
+                    title="Ajusta participantes avulsos para atingir o mínimo de créditos na criação. Haverá cobrança extra.">
+                Liberar taxa de inscrição
+            </button>
+            <br class="unlock-entry-fee-hint-break" id="unlock-entry-fee-hint-break" style="display:none;">
+            <small class="text-muted unlock-entry-fee-hint" id="unlock-entry-fee-hint" style="display:none;">
+                Será cobrado extra em participantes avulsos para liberar a taxa de inscrição.
+            </small>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
 
         <?php echo form_open($formAction, ['id' => $formId, 'enctype' => 'multipart/form-data']); ?>
 
-        <div class="form-group">
-            <label>Nome *</label>
-            <input type="text" name="name" class="form-control" required value="<?php echo htmlspecialchars($t['name'] ?? ''); ?>">
-        </div>
+        <?php
+        $participantsSoloHelp = $isEdit
+            ? 'Não pode ser alterado após a criação do torneio.'
+            : ($planParticipantBenefitsActive
+                ? 'Até ' . $includedForBilling . ' inclusos no plano; acima disso: ' . arenagamer_format_credits($extraPrice) . ' por participante avulso.'
+                : 'Preço padrão: ' . arenagamer_format_credits($extraPrice) . ' por participante acima de ' . $includedForBilling . '.');
+        $participantsTeamHelp = $isEdit
+            ? 'Não pode ser alterado após a criação do torneio.'
+            : 'Número máximo de equipes inscritas neste campeonato.';
+        $participantsHelpText = $isEdit
+            ? 'Não pode ser alterado após a criação do torneio.'
+            : ($planParticipantBenefitsActive
+                ? 'Até ' . $includedForBilling . ' inclusos no plano; acima disso: ' . arenagamer_format_credits($extraPrice) . ' por participante avulso.'
+                : 'Preço padrão: ' . arenagamer_format_credits($extraPrice) . ' por participante acima de ' . $includedForBilling . '.');
 
-        <div class="form-group">
-            <label>Nome do jogo</label>
-            <input type="text" name="game_name" id="game_name" class="form-control" maxlength="100"
-                   placeholder="Ex.: Counter-Strike 2"
-                   value="<?php echo htmlspecialchars($t['gameName'] ?? ''); ?>">
-            <small class="text-muted">Nome do jogo que será disputado no torneio.</small>
-        </div>
+        $this->load->view('../../modules/arenagamer/views/client/tournaments/_basic_info_fields', [
+            'tournament'  => $t,
+            'presets'     => $presets ?? null,
+            'search_url'  => arenagamer_client_url('search_presets'),
+        ]);
 
-        <div class="form-group">
-            <label>Descrição</label>
-            <textarea name="description" class="form-control" rows="3"><?php echo htmlspecialchars($t['description'] ?? ''); ?></textarea>
-        </div>
+        $this->load->view('../../modules/arenagamer/views/client/tournaments/_tournament_config_fields', [
+            'tournament'                      => $t,
+            'is_edit'                         => $isEdit,
+            'default_participants_limit'      => $defaultLimit,
+            'included_for_billing'            => $includedForBilling,
+            'extra_participant_price'         => $extraPrice,
+            'plan_participant_benefits_active'=> $planParticipantBenefitsActive,
+            'participants_solo_help'          => $participantsSoloHelp,
+            'participants_team_help'          => $participantsTeamHelp,
+            'participants_help_text'          => $participantsHelpText,
+            'show_entry_fee_unlock_button'    => !$isEdit && !$allowsEntryFeeByPlan,
+        ]);
 
-        <div class="row">
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Tipo</label>
-                    <select name="type" class="form-control">
-                        <?php foreach (arenagamer_tournament_type_options() as $type): ?>
-                        <option value="<?php echo $type; ?>" <?php echo ($t['type'] ?? 'SINGLE_ELIMINATION') === $type ? 'selected' : ''; ?>><?php echo htmlspecialchars(arenagamer_tournament_type_label($type)); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Formato</label>
-                    <select name="format" id="format" class="form-control">
-                        <?php foreach (arenagamer_tournament_format_options() as $format): ?>
-                        <option value="<?php echo $format; ?>" <?php echo ($t['format'] ?? 'SOLO') === $format ? 'selected' : ''; ?>><?php echo htmlspecialchars(arenagamer_tournament_format_label($format)); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Visibilidade</label>
-                    <select name="visibility" class="form-control">
-                        <?php foreach (arenagamer_tournament_visibility_options() as $visibility): ?>
-                        <option value="<?php echo $visibility; ?>" <?php echo ($t['visibility'] ?? 'PUBLIC') === $visibility ? 'selected' : ''; ?>><?php echo htmlspecialchars(arenagamer_tournament_visibility_label($visibility)); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-            </div>
-        </div>
+        $this->load->view('../../modules/arenagamer/views/client/tournaments/_prize_fee_fields', [
+            'tournament'              => $t,
+            'is_edit'                 => $isEdit,
+            'label_class'             => '',
+            'help_class'              => 'text-muted',
+            'allows_entry_fee_by_plan'=> $allowsEntryFeeByPlan,
+            'entry_fee_min_cost'      => $entryFeeMinCreationCost,
+            'entry_fee_help'          => '',
+        ]);
 
-        <div class="row">
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Limite de participantes</label>
-                    <input type="number"
-                           min="2"
-                           name="participants_limit"
-                           id="participants_limit"
-                           class="form-control"
-                           value="<?php echo $defaultLimit; ?>"
-                           <?php echo $isEdit ? 'readonly' : ''; ?>>
-                    <small class="text-muted">
-                        <?php if ($isEdit): ?>
-                        Não pode ser alterado após a criação do torneio.
-                        <?php elseif ($planParticipantBenefitsActive): ?>
-                        Até <?php echo $includedForBilling; ?> inclusos no plano;
-                        acima disso: <?php echo arenagamer_format_credits($extraPrice); ?> por participante avulso.
-                        <?php else: ?>
-                        Preço padrão: <?php echo arenagamer_format_credits($extraPrice); ?> por participante acima de <?php echo $includedForBilling; ?>.
-                        <?php endif; ?>
-                    </small>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Preset / Jogo</label>
-                    <select name="preset_id" id="preset_id" class="form-control">
-                        <option value="">Nenhum</option>
-                        <?php foreach ($presetsData as $p): ?>
-                        <option value="<?php echo (int) $p['id']; ?>" <?php echo (int) ($t['presetId'] ?? 0) === (int) $p['id'] ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($p['gameName'] ?? ('Preset #' . $p['id'])); ?>
-                        </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <small class="text-muted">Ao selecionar ou trocar o preset, os campos do jogo são preenchidos automaticamente.</small>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Taxa de entrada (créditos)</label>
-                    <input type="number"
-                           step="0.01"
-                           min="0"
-                           name="entry_fee_credits"
-                           id="entry_fee_credits"
-                           class="form-control"
-                           value="<?php echo htmlspecialchars($t['entryFeeCredits'] ?? '0'); ?>"
-                           <?php echo !$allowsEntryFee ? 'readonly' : ''; ?>>
-                    <small class="text-muted" id="entry-fee-help">
-                        <?php if (!$allowsEntryFeeByPlan && !$allowsEntryFee): ?>
-                        Liberada a partir de <?php echo arenagamer_format_credits($entryFeeMinCreationCost); ?> no custo de criação.
-                        <?php elseif (!$allowsEntryFeeByPlan && $allowsEntryFee): ?>
-                        Liberada — custo de criação a partir de <?php echo arenagamer_format_credits($entryFeeMinCreationCost); ?>.
-                        <?php endif; ?>
-                    </small>
-                </div>
-            </div>
-        </div>
-
-        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_date_fields', [
+        $this->load->view('../../modules/arenagamer/views/client/tournaments/_date_fields', [
             'tournament' => $t,
             'is_create'  => !$isEdit,
-        ]); ?>
+        ]);
 
-        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_media_fields', [
+        $this->load->view('../../modules/arenagamer/views/client/tournaments/_media_fields', [
             'tournament' => $t,
             'presets'    => $presets ?? null,
-        ]); ?>
+        ]);
 
-        <div class="form-group">
-            <label>Regras</label>
-            <textarea name="rules" id="rules" class="form-control" rows="3"><?php echo htmlspecialchars($t['rules'] ?? ''); ?></textarea>
-            <small class="text-muted">Preenchidas automaticamente ao escolher um preset (se o preset tiver modelo de regras).</small>
-        </div>
+        $this->load->view('../../modules/arenagamer/views/client/tournaments/_rules_fields', [
+            'tournament' => $t,
+        ]);
+        ?>
 
         <?php if (!$isEdit): ?>
         <div class="panel_s">
@@ -249,6 +180,10 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
                         <tr id="cost-line-discount-row" style="<?php echo !empty($costBreakdown['baseWaived']) ? '' : 'display:none;'; ?>">
                             <td class="text-success">Benefício do plano (taxa base isenta)</td>
                             <td class="text-right text-success" id="cost-line-discount">− <?php echo arenagamer_format_credits($costBreakdown['planDiscount']); ?></td>
+                        </tr>
+                        <tr id="cost-line-prize-pool-row" style="display:none;">
+                            <td>Prêmio fixo (reservado)</td>
+                            <td class="text-right" id="cost-line-prize-pool">0,00 créditos</td>
                         </tr>
                         <tr class="success">
                             <td><strong>Total a debitar em créditos</strong></td>
@@ -321,6 +256,10 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
                             <td class="text-success">Benefício do plano (taxa base isenta)</td>
                             <td class="text-right text-success" id="confirm-cost-discount">—</td>
                         </tr>
+                        <tr id="confirm-cost-prize-pool-row" style="display:none;">
+                            <td>Prêmio fixo (reservado)</td>
+                            <td class="text-right" id="confirm-cost-prize-pool">—</td>
+                        </tr>
                         <tr class="success">
                             <td><strong>Total a debitar</strong></td>
                             <td class="text-right"><strong id="confirm-cost-total">—</strong></td>
@@ -365,6 +304,15 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
     var entryFeeInput = document.getElementById('entry_fee_credits');
     var entryFeeHelp = document.getElementById('entry-fee-help');
     var entryFeePlanStatus = document.getElementById('entry-fee-plan-status');
+    var unlockEntryFeeBtn = document.getElementById('unlock-entry-fee-btn');
+    var unlockEntryFeeParticipantsBtn = document.getElementById('unlock-entry-fee-participants-btn');
+    var unlockEntryFeeHint = document.getElementById('unlock-entry-fee-hint');
+    var unlockEntryFeeHintBreak = document.getElementById('unlock-entry-fee-hint-break');
+    var unlockEntryFeeParticipantsHint = document.getElementById('unlock-entry-fee-participants-hint');
+    var prizeTypeInput = document.getElementById('prize_type');
+    var prizeFundingInput = document.getElementById('prize_funding');
+    var prizePoolInput = document.getElementById('prize_pool');
+    var prizePoolRow = document.getElementById('cost-line-prize-pool-row');
     var extraRow = document.getElementById('cost-line-extra-row');
     var discountRow = document.getElementById('cost-line-discount-row');
     var noteEl = document.getElementById('tournament-cost-note');
@@ -379,6 +327,20 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
         return Number(value).toFixed(2).replace('.', ',') + ' créditos';
     }
 
+    function isEntryFeesMode() {
+        return prizeFundingInput && prizeFundingInput.value === 'ENTRY_FEES';
+    }
+
+    function getPrizePoolCost() {
+        if (!prizeTypeInput || !prizeFundingInput || !prizePoolInput) {
+            return 0;
+        }
+        if (prizeTypeInput.value === 'AUTOMATIC' && prizeFundingInput.value === 'FIXED') {
+            return Math.max(0, parseFloat(prizePoolInput.value) || 0);
+        }
+        return 0;
+    }
+
     function computeBreakdown(limit) {
         var included = getIncludedForBilling();
         limit = Math.max(0, parseInt(limit, 10) || 0);
@@ -387,7 +349,8 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
         var normalSubtotal = basePrice + extraTotal;
         var baseWaived = hasFreeTournamentSlot && !tournamentLimitReached;
         var planDiscount = baseWaived ? basePrice : 0;
-        var total = Math.max(0, normalSubtotal - planDiscount);
+        var prizePoolCost = getPrizePoolCost();
+        var total = Math.max(0, normalSubtotal - planDiscount + prizePoolCost);
         var participantsOver = extraCount > 0;
 
         return {
@@ -398,6 +361,7 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
             normalSubtotal: normalSubtotal,
             baseWaived: baseWaived,
             planDiscount: planDiscount,
+            prizePoolCost: prizePoolCost,
             total: total,
             participantsOver: participantsOver
         };
@@ -422,35 +386,128 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
         return 'Cobrança conforme preço padrão do campeonato.';
     }
 
-    function updateEntryFeeAvailability(b) {
-        var allowed = planAllowsEntryFee || b.total >= entryFeeMinCreationCost;
+    function entryFeeFieldRelevant() {
+        return prizeFundingInput && (prizeFundingInput.value === 'ENTRY_FEES' || prizeFundingInput.value === 'FIXED');
+    }
 
-        if (entryFeeInput) {
-            entryFeeInput.readOnly = !allowed;
-            if (!allowed) {
-                entryFeeInput.value = '0';
+    function findParticipantsToUnlockEntryFee(startLimit) {
+        if (extraPrice <= 0 || !input || input.readOnly) {
+            return null;
+        }
+
+        var included = getIncludedForBilling();
+        var target = entryFeeMinCreationCost;
+        startLimit = Math.max(2, parseInt(startLimit, 10) || included);
+        var maxLimit = Math.max(startLimit + 500, included + Math.ceil(target / extraPrice) + 50);
+
+        for (var limit = startLimit; limit <= maxLimit; limit++) {
+            var breakdown = computeBreakdown(limit);
+            var eligibleCost = Math.max(0, breakdown.normalSubtotal - breakdown.planDiscount);
+            if (eligibleCost >= target) {
+                return {
+                    limit: limit,
+                    added: limit - startLimit,
+                    breakdown: breakdown
+                };
             }
         }
 
-        if (entryFeePlanStatus) {
-            if (planAllowsEntryFee) {
-                entryFeePlanStatus.textContent = 'permitida pelo plano';
-            } else if (b.total >= entryFeeMinCreationCost) {
-                entryFeePlanStatus.textContent = 'liberada (a partir de ' + formatCredits(entryFeeMinCreationCost) + ')';
-            } else {
-                entryFeePlanStatus.textContent = 'liberada a partir de ' + formatCredits(entryFeeMinCreationCost) + ' na criação';
+        return null;
+    }
+
+    function applyParticipantsToUnlockEntryFee() {
+        if (!input || planAllowsEntryFee) {
+            return;
+        }
+
+        var result = findParticipantsToUnlockEntryFee(input.value);
+        if (!result) {
+            window.alert('Não foi possível liberar a taxa de inscrição só com participantes avulsos. Ajuste o prêmio fixo ou contrate um plano com esse benefício.');
+            return;
+        }
+
+        input.value = result.limit;
+        updatePreview();
+    }
+
+    function syncUnlockEntryFeeButtons(b, allowed) {
+        var show = !isEdit && !planAllowsEntryFee && !allowed && extraPrice > 0 && input && !input.readOnly;
+        var result = show ? findParticipantsToUnlockEntryFee(input.value) : null;
+        var label = 'Liberar taxa de inscrição';
+        var hint = 'Será cobrado extra em participantes avulsos para liberar a taxa de inscrição.';
+
+        if (result && result.added > 0) {
+            var currentBreakdown = computeBreakdown(input.value);
+            var extraCost = Math.max(0, result.breakdown.total - currentBreakdown.total);
+            label = 'Liberar taxa de inscrição (+' + result.added + ' participante' + (result.added === 1 ? '' : 's') + ')';
+            hint = 'Cobrança extra estimada de ' + formatCredits(extraCost)
+                + ' para liberar a taxa de inscrição.';
+        } else if (result && result.added === 0) {
+            show = false;
+        } else if (show && !result) {
+            show = false;
+        }
+
+        [unlockEntryFeeBtn, unlockEntryFeeParticipantsBtn].forEach(function (btn) {
+            if (!btn) {
+                return;
+            }
+            btn.style.display = show ? '' : 'none';
+            btn.textContent = label;
+        });
+
+        if (unlockEntryFeeHint) {
+            unlockEntryFeeHint.style.display = show ? '' : 'none';
+            unlockEntryFeeHint.textContent = hint;
+        }
+        if (unlockEntryFeeHintBreak) {
+            unlockEntryFeeHintBreak.style.display = show ? '' : 'none';
+        }
+        if (unlockEntryFeeParticipantsHint) {
+            unlockEntryFeeParticipantsHint.style.display = show ? '' : 'none';
+            unlockEntryFeeParticipantsHint.textContent = hint;
+        }
+    }
+
+    function updateEntryFeeAvailability(b, allowed) {
+        var fundingAllowed = planAllowsEntryFee || Math.max(0, b.normalSubtotal - b.planDiscount) >= entryFeeMinCreationCost;
+        if (typeof allowed !== 'boolean') {
+            allowed = planAllowsEntryFee || b.total >= entryFeeMinCreationCost;
+        }
+
+        if (entryFeeInput && entryFeeFieldRelevant()) {
+            var wantsEntryFee = parseFloat(entryFeeInput.value) > 0;
+            var canUseEntryFee = isEntryFeesMode() ? fundingAllowed : allowed;
+            entryFeeInput.readOnly = !canUseEntryFee && (isEntryFeesMode() || wantsEntryFee);
+            if (!canUseEntryFee && isEntryFeesMode()) {
+                entryFeeInput.value = '';
             }
         }
 
-        if (entryFeeHelp) {
-            if (planAllowsEntryFee) {
-                entryFeeHelp.textContent = '';
-            } else if (b.total >= entryFeeMinCreationCost) {
-                entryFeeHelp.textContent = 'Liberada — custo de criação a partir de ' + formatCredits(entryFeeMinCreationCost) + '.';
-            } else {
-                entryFeeHelp.textContent = 'Liberada a partir de ' + formatCredits(entryFeeMinCreationCost) + ' no custo de criação.';
-            }
+        if (entryFeePlanStatus && entryFeeFieldRelevant()) {
+            entryFeePlanStatus.textContent = (allowed || fundingAllowed) ? 'liberada' : 'não liberada';
         }
+
+        syncUnlockEntryFeeButtons(b, fundingAllowed);
+    }
+
+    function publishCreationCosts(b) {
+        var entryFeeEligibleCost = Math.max(0, b.normalSubtotal - b.planDiscount);
+        var entryFeeAllowed = planAllowsEntryFee || b.total >= entryFeeMinCreationCost;
+        var entryFeesFundingAllowed = planAllowsEntryFee || entryFeeEligibleCost >= entryFeeMinCreationCost;
+
+        window.arenagamerTournamentCosts = {
+            total: b.total,
+            entryFeeEligibleCost: entryFeeEligibleCost,
+            entryFeeAllowed: entryFeeAllowed,
+            entryFeesFundingAllowed: entryFeesFundingAllowed
+        };
+
+        document.dispatchEvent(new CustomEvent('arenagamer:creation-cost-changed', {
+            detail: window.arenagamerTournamentCosts
+        }));
+
+        updateEntryFeeAvailability(b, entryFeeAllowed);
     }
 
     function updatePreview() {
@@ -469,11 +526,15 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
             discountRow.style.display = b.baseWaived ? '' : 'none';
             document.getElementById('cost-line-discount').textContent = '− ' + formatCredits(b.planDiscount);
         }
+        if (prizePoolRow) {
+            prizePoolRow.style.display = b.prizePoolCost > 0 ? '' : 'none';
+            document.getElementById('cost-line-prize-pool').textContent = formatCredits(b.prizePoolCost);
+        }
         if (noteEl) {
             noteEl.textContent = getCostNote(b);
         }
 
-        updateEntryFeeAvailability(b);
+        publishCreationCosts(b);
 
         return b;
     }
@@ -505,6 +566,12 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
             document.getElementById('confirm-cost-discount').textContent = '− ' + formatCredits(b.planDiscount);
         }
 
+        var prizePoolConfirmRow = document.getElementById('confirm-cost-prize-pool-row');
+        if (prizePoolConfirmRow) {
+            prizePoolConfirmRow.style.display = b.prizePoolCost > 0 ? '' : 'none';
+            document.getElementById('confirm-cost-prize-pool').textContent = formatCredits(b.prizePoolCost);
+        }
+
         var insufficient = b.total > 0 && walletAvailable < b.total;
         if (insufficientEl) {
             insufficientEl.style.display = insufficient ? '' : 'none';
@@ -518,6 +585,17 @@ $tournamentsRemaining = $maxTournamentsMonth > 0 ? max(0, $maxTournamentsMonth -
         input.addEventListener('input', updatePreview);
         updatePreview();
     }
+
+    [unlockEntryFeeBtn, unlockEntryFeeParticipantsBtn].forEach(function (btn) {
+        if (btn) {
+            btn.addEventListener('click', applyParticipantsToUnlockEntryFee);
+        }
+    });
+
+    if (prizePoolInput) {
+        prizePoolInput.addEventListener('input', updatePreview);
+    }
+    document.addEventListener('arenagamer:prize-settings-changed', updatePreview);
 
     if (form && !isEdit) {
         form.addEventListener('submit', function (event) {

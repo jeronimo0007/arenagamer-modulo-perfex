@@ -45,10 +45,29 @@ $showPermissionsPanel = $canManage && !empty($t['clientUserId']);
                     <?php endif; ?>
                 </div>
                 <?php endif; ?>
-                <p><strong>Tipo:</strong> <?php echo htmlspecialchars(arenagamer_tournament_type_label($t['type'] ?? '')); ?> · <?php echo htmlspecialchars(arenagamer_tournament_format_label($t['format'] ?? '')); ?></p>
+                <p><strong>Modo:</strong> <?php echo htmlspecialchars(arenagamer_tournament_type_label($t['type'] ?? '')); ?> · <?php echo htmlspecialchars(arenagamer_tournament_format_label($t['format'] ?? '')); ?></p>
                 <p><strong>Jogo:</strong> <?php echo htmlspecialchars(arenagamer_tournament_game_name($t)); ?></p>
                 <p><strong>Organizador:</strong> <?php echo htmlspecialchars($t['ownerName'] ?? '—'); ?> <?php echo arenagamer_owner_type_badge($t['ownerType'] ?? ''); ?></p>
-                <p><strong>Inscritos:</strong> <?php echo (int) ($t['participantCount'] ?? 0); ?> / <?php echo (int) ($t['participantsLimit'] ?? 0); ?></p>
+                <p><strong>Inscritos:</strong>
+                    <?php echo (int) ($t['participantCount'] ?? 0); ?> /
+                    <?php echo (int) ($t['participantsLimit'] ?? 0); ?>
+                    <?php if (($t['format'] ?? '') === 'TEAM'): ?>
+                    <span class="text-muted">equipes</span>
+                    <?php endif; ?>
+                </p>
+                <?php if (($t['format'] ?? '') === 'TEAM' && (!empty($t['minPlayersPerTeam']) || !empty($t['maxPlayersPerTeam']))): ?>
+                <p><strong>Jogadores por equipe:</strong>
+                    <?php if (!empty($t['minPlayersPerTeam'])): ?>
+                    mín. <?php echo (int) $t['minPlayersPerTeam']; ?>
+                    <?php endif; ?>
+                    <?php if (!empty($t['minPlayersPerTeam']) && !empty($t['maxPlayersPerTeam'])): ?>
+                    —
+                    <?php endif; ?>
+                    <?php if (!empty($t['maxPlayersPerTeam'])): ?>
+                    máx. <?php echo (int) $t['maxPlayersPerTeam']; ?>
+                    <?php endif; ?>
+                </p>
+                <?php endif; ?>
                 <?php if (!empty($t['registrationOpensAt'])): ?>
                 <p><strong>Abertura prevista das inscrições:</strong> <?php echo arenagamer_format_date($t['registrationOpensAt'], 'd/m/Y H:i'); ?></p>
                 <?php endif; ?>
@@ -116,7 +135,54 @@ $showPermissionsPanel = $canManage && !empty($t['clientUserId']);
                 <div class="panel_s">
                     <div class="panel-body">
                         <?php echo form_open(arenagamer_client_url('join_tournament/' . $t['slug'])); ?>
+                        <?php if (($t['format'] ?? '') === 'TEAM'): ?>
+                        <p class="text-muted">Este campeonato exige inscrição por equipe.</p>
+                        <?php
+                        $myTeams = is_array($my_teams ?? null) ? $my_teams : [];
+                        $minRoster = (int) ($t['minPlayersPerTeam'] ?? 0);
+                        $maxRoster = (int) ($t['maxPlayersPerTeam'] ?? 0);
+                        ?>
+                        <?php if (empty($myTeams)): ?>
+                        <div class="alert alert-warning mbot10">
+                            Você não participa de nenhum time. <a href="<?php echo arenagamer_client_url('teams'); ?>">Criar ou gerenciar times</a>
+                        </div>
+                        <button type="submit" class="btn btn-success btn-block" disabled>Inscrever equipe</button>
+                        <?php else: ?>
+                        <div class="form-group">
+                            <label>Selecione o time</label>
+                            <select name="team_id" class="form-control" required>
+                                <option value="">— Escolha —</option>
+                                <?php foreach ($myTeams as $team): ?>
+                                <?php
+                                $memberCount = (int) ($team['memberCount'] ?? 0);
+                                $canRegister = !empty($team['canRegisterInTournament']);
+                                $underLimit = $minRoster > 0 && $memberCount < $minRoster;
+                                $overLimit = $maxRoster > 0 && $memberCount > $maxRoster;
+                                $ineligible = !$canRegister || $underLimit || $overLimit;
+                                ?>
+                                <option value="<?php echo (int) ($team['id'] ?? 0); ?>" <?php echo $ineligible ? 'disabled' : ''; ?>>
+                                    <?php echo htmlspecialchars($team['name'] ?? ('Time #' . (int) ($team['id'] ?? 0))); ?>
+                                    <?php if (!empty($team['tag'])): ?>
+                                    [<?php echo htmlspecialchars($team['tag']); ?>]
+                                    <?php endif; ?>
+                                    — <?php echo $memberCount; ?> jogador(es)
+                                    <?php if (!$canRegister): ?>
+                                    (sem permissão — só dono ou capitão inscreve)
+                                    <?php elseif ($underLimit): ?>
+                                    (mínimo exigido: <?php echo $minRoster; ?>)
+                                    <?php elseif ($overLimit): ?>
+                                    (excede máximo de <?php echo $maxRoster; ?>)
+                                    <?php endif; ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-success btn-block">Inscrever equipe</button>
+                        <?php endif; ?>
+                        <?php else: ?>
+                        <p class="text-muted">Inscrição individual (solo).</p>
                         <button type="submit" class="btn btn-success btn-block">Inscrever-se</button>
+                        <?php endif; ?>
                         <?php echo form_close(); ?>
                     </div>
                 </div>

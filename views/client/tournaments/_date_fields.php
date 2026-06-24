@@ -24,7 +24,7 @@ $expectedEndDate = arenagamer_datetime_local_value($t['expectedEndDate'] ?? '');
             </div>
             <div class="col-md-6">
                 <div class="form-group">
-                    <label for="registration_deadline">Prazo de inscrição</label>
+                    <label for="registration_deadline">Prazo máximo de inscrição</label>
                     <input type="datetime-local" name="registration_deadline" id="registration_deadline"
                            class="form-control arenagamer-date-field"
                            value="<?php echo htmlspecialchars($registrationDeadline); ?>">
@@ -39,7 +39,7 @@ $expectedEndDate = arenagamer_datetime_local_value($t['expectedEndDate'] ?? '');
                     <input type="datetime-local" name="start_date" id="start_date"
                            class="form-control arenagamer-date-field"
                            value="<?php echo htmlspecialchars($startDate); ?>">
-                    <small class="text-muted">Opcional. Se houver prazo de inscrição, não pode ser anterior a ele.</small>
+                    <small class="text-muted">Opcional. Se houver prazo máximo de inscrição, a data de início não pode ser anterior a ele.</small>
                 </div>
             </div>
             <div class="col-md-6">

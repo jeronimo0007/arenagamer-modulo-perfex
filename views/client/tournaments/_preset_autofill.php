@@ -6,15 +6,38 @@ $presetMap = arenagamer_presets_autofill_map($presetsData);
 <script>
 (function () {
     var presets = <?php echo json_encode($presetMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
-    var presetSelect = document.getElementById('preset_id');
+    var presetInput = document.getElementById('preset_id');
 
-    if (!presetSelect) {
+    if (!presetInput) {
         return;
     }
 
     function field(id) {
         return document.getElementById(id);
     }
+
+    function toAutofillEntry(preset) {
+        var gameImageUrl = preset.gameImageUrl || preset.iconUrl || '';
+        return {
+            gameName: preset.gameName || '',
+            platform: preset.platform || '',
+            teamSize: parseInt(preset.teamSize, 10) || 1,
+            minPlayersPerTeam: parseInt(preset.minPlayersPerTeam, 10) || 1,
+            maxPlayersPerTeam: parseInt(preset.maxPlayersPerTeam, 10) || 1,
+            iconUrl: preset.iconUrl || '',
+            gameImageUrl: gameImageUrl,
+            presetGameImageUrl: (preset.gameImageUrl || '').trim(),
+            locksGameImage: ((preset.gameImageUrl || '').trim() !== ''),
+            rulesTemplate: preset.rulesTemplate || ''
+        };
+    }
+
+    window.arenagamerRegisterPreset = function (preset) {
+        if (!preset || !preset.id) {
+            return;
+        }
+        presets[preset.id] = toAutofillEntry(preset);
+    };
 
     function setValue(id, value) {
         var el = field(id);
@@ -84,8 +107,8 @@ $presetMap = arenagamer_presets_autofill_map($presetsData);
 
         if (helpEl) {
             helpEl.textContent = locked
-                ? 'Definida pelo preset selecionado (não editável).'
-                : 'Se vazio, usa a imagem do preset selecionado.';
+                ? 'Definida pelo jogo selecionado (não editável).'
+                : 'Se vazio, usa a imagem do jogo selecionado.';
         }
 
         updateGameImagePreview(locked ? preset.presetGameImageUrl : (urlEl ? urlEl.value : ''));
@@ -98,11 +121,19 @@ $presetMap = arenagamer_presets_autofill_map($presetsData);
             return;
         }
 
-        if (preset.gameName) {
-            setValue('game_name', preset.gameName);
+        setSelectValue('format', preset.teamSize > 1 ? 'TEAM' : 'SOLO');
+
+        if (preset.minPlayersPerTeam > 0 && field('min_players_per_team')) {
+            setValue('min_players_per_team', preset.minPlayersPerTeam);
         }
 
-        setSelectValue('format', preset.teamSize > 1 ? 'TEAM' : 'SOLO');
+        if (preset.maxPlayersPerTeam > 0 && field('max_players_per_team')) {
+            setValue('max_players_per_team', preset.maxPlayersPerTeam);
+        }
+
+        if (field('format')) {
+            field('format').dispatchEvent(new Event('change', { bubbles: true }));
+        }
 
         if (preset.rulesTemplate) {
             setValue('rules', preset.rulesTemplate);
@@ -133,7 +164,7 @@ $presetMap = arenagamer_presets_autofill_map($presetsData);
         }
     }
 
-    presetSelect.addEventListener('change', function () {
+    presetInput.addEventListener('change', function () {
         var presetId = parseInt(this.value, 10);
         if (!presetId) {
             setGameImageLock(null);
@@ -142,7 +173,7 @@ $presetMap = arenagamer_presets_autofill_map($presetsData);
         applyPreset(presetId);
     });
 
-    var initialPresetId = parseInt(presetSelect.value, 10);
+    var initialPresetId = parseInt(presetInput.value, 10);
     if (initialPresetId) {
         var initialPreset = presets[initialPresetId] || presets[String(initialPresetId)];
         if (initialPreset && initialPreset.locksGameImage) {

@@ -59,7 +59,7 @@ $clientNames = $client_names ?? [];
                                 <th>Formato</th>
                                 <th>Status</th>
                                 <th>Vagas</th>
-                                <th>Taxa Entrada</th>
+                                <th>Taxa de inscrição</th>
                                 <th>Início</th>
                                 <th>Ações</th>
                             </tr>

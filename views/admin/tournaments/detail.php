@@ -58,8 +58,21 @@
                         <div class="row">
                             <div class="col-md-6">
                                 <p><strong>Slug:</strong> <code><?php echo $t['slug']; ?></code></p>
-                                <p><strong>Tipo:</strong> <?php echo htmlspecialchars(arenagamer_tournament_type_label($t['type'] ?? '')); ?></p>
+                                <p><strong>Modo:</strong> <?php echo htmlspecialchars(arenagamer_tournament_type_label($t['type'] ?? '')); ?></p>
                                 <p><strong>Formato:</strong> <?php echo isset($t['format']) ? htmlspecialchars(arenagamer_tournament_format_label($t['format'])) : '—'; ?></p>
+                                <?php if (($t['format'] ?? '') === 'TEAM' && (!empty($t['minPlayersPerTeam']) || !empty($t['maxPlayersPerTeam']))): ?>
+                                <p><strong>Jogadores por equipe:</strong>
+                                    <?php if (!empty($t['minPlayersPerTeam'])): ?>
+                                    mín. <?php echo (int) $t['minPlayersPerTeam']; ?>
+                                    <?php endif; ?>
+                                    <?php if (!empty($t['minPlayersPerTeam']) && !empty($t['maxPlayersPerTeam'])): ?>
+                                    —
+                                    <?php endif; ?>
+                                    <?php if (!empty($t['maxPlayersPerTeam'])): ?>
+                                    máx. <?php echo (int) $t['maxPlayersPerTeam']; ?>
+                                    <?php endif; ?>
+                                </p>
+                                <?php endif; ?>
                                 <p><strong>Organizador:</strong> <?php echo isset($t['ownerName']) ? htmlspecialchars($t['ownerName']) : '—'; ?>
                                     <?php if (!empty($t['ownerType'])): ?>
                                     <?php echo arenagamer_owner_type_badge($t['ownerType']); ?>
@@ -67,13 +80,16 @@
                                 </p>
                                 <p><strong>Vínculo:</strong> <?php echo arenagamer_tournament_client_badge($t, $client_name ?? null); ?></p>
                                 <p><strong>Jogo:</strong> <?php echo htmlspecialchars(arenagamer_tournament_game_name($t)); ?></p>
-                                <p><strong>Preset:</strong> <?php echo isset($t['presetName']) ? htmlspecialchars($t['presetName']) : '—'; ?></p>
                                 <p><strong>Inscritos:</strong> <?php echo isset($t['participantCount']) ? $t['participantCount'] : 0; ?></p>
                             </div>
                             <div class="col-md-6">
-                                <p><strong>Vagas:</strong> <?php echo isset($t['participantsLimit']) ? $t['participantsLimit'] : '—'; ?></p>
+                                <p><strong>Vagas:</strong> <?php echo isset($t['participantsLimit']) ? $t['participantsLimit'] : '—'; ?>
+                                    <?php if (($t['format'] ?? '') === 'TEAM'): ?>
+                                    <span class="text-muted">(equipes)</span>
+                                    <?php endif; ?>
+                                </p>
                                 <p><strong>Mín. Participantes:</strong> <?php echo isset($t['minParticipants']) ? $t['minParticipants'] : '—'; ?></p>
-                                <p><strong>Taxa Entrada:</strong> <?php echo isset($t['entryFeeCredits']) ? number_format($t['entryFeeCredits'], 2) . ' créditos' : 'Grátis'; ?></p>
+                                <p><strong>Taxa de inscrição:</strong> <?php echo isset($t['entryFeeCredits']) ? number_format($t['entryFeeCredits'], 2) . ' créditos' : 'Grátis'; ?></p>
                                 <p><strong>Visibilidade:</strong> <?php echo isset($t['visibility']) ? htmlspecialchars(arenagamer_tournament_visibility_label($t['visibility'])) : '—'; ?></p>
                                 <p><strong>Prêmio:</strong> <?php echo isset($t['prizePool']) ? arenagamer_format_credits($t['prizePool']) : '—'; ?></p>
                             </div>
@@ -365,7 +381,7 @@
                     <div class="panel-heading"><h4 class="panel-title">Datas</h4></div>
                     <div class="panel-body">
                         <p><strong>Início:</strong> <?php echo isset($t['startDate']) ? date('d/m/Y H:i', strtotime($t['startDate'])) : '—'; ?></p>
-                        <p><strong>Deadline Inscrição:</strong> <?php echo isset($t['registrationDeadline']) ? date('d/m/Y H:i', strtotime($t['registrationDeadline'])) : '—'; ?></p>
+                        <p><strong>Prazo máximo de inscrição:</strong> <?php echo isset($t['registrationDeadline']) ? date('d/m/Y H:i', strtotime($t['registrationDeadline'])) : '—'; ?></p>
                         <p><strong>Criado em:</strong> <?php echo isset($t['createdAt']) ? date('d/m/Y H:i', strtotime($t['createdAt'])) : '—'; ?></p>
                     </div>
                 </div>

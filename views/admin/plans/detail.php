@@ -43,7 +43,7 @@ $planId = (int) ($plan['id'] ?? 0);
                                 <p><strong>Máx. torneios/mês:</strong> <?php echo arenagamer_plan_max_tournaments_per_month($plan); ?></p>
                                 <p><strong>Máx. participantes grátis:</strong> <?php echo $plan['freeMaxParticipants'] ?? '—'; ?></p>
                                 <p><strong>Ordem:</strong> <?php echo $plan['sortOrder'] ?? '—'; ?></p>
-                                <p><strong>Permite taxa de entrada:</strong>
+                                <p><strong>Permite taxa de inscrição:</strong>
                                     <?php echo !empty($plan['allowsEntryFee']) ? 'Sim' : 'Não'; ?>
                                 </p>
                                 <p><strong>Oculto:</strong> <?php echo !empty($plan['hidden']) ? 'Sim' : 'Não'; ?></p>

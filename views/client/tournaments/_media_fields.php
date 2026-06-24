@@ -13,6 +13,12 @@ $coverImageUrl = (string) ($t['coverImageUrl'] ?? '');
 $logoImageUrl = arenagamer_tournament_logo_image_url($t);
 ?>
 
+<div class="panel_s mtop10 mbot15">
+    <div class="panel-heading">
+        <h4 class="panel-title"><i class="fa fa-image"></i> Mídia e links</h4>
+    </div>
+    <div class="panel-body">
+
 <div class="row">
     <div class="col-md-4">
         <div class="form-group" id="game_image_fields">
@@ -30,8 +36,8 @@ $logoImageUrl = arenagamer_tournament_logo_image_url($t);
                    <?php echo $gameImageLocked ? 'disabled' : ''; ?>>
             <small class="text-muted" id="game_image_help">
                 <?php echo $gameImageLocked
-                    ? 'Definida pelo preset selecionado (não editável).'
-                    : 'Se vazio, usa a imagem do preset selecionado.'; ?>
+                    ? 'Definida pelo jogo selecionado (não editável).'
+                    : 'Se vazio, usa a imagem do jogo selecionado.'; ?>
             </small>
         </div>
     </div>
@@ -76,11 +82,14 @@ $logoImageUrl = arenagamer_tournament_logo_image_url($t);
         </div>
     </div>
     <div class="col-md-6">
-        <div class="form-group">
+        <div class="form-group mbot0">
             <label>Link da Twitch</label>
             <input type="url" name="twitch_url" class="form-control"
                    placeholder="https://twitch.tv/..."
                    value="<?php echo htmlspecialchars($t['twitchUrl'] ?? ''); ?>">
         </div>
+    </div>
+</div>
+
     </div>
 </div>

@@ -86,7 +86,9 @@ class Arenagamer extends AdminController
         $data['api_error'] = '';
 
         if ($this->input->post()) {
-            $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null);
+            $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, [
+                'api' => $this->arenagamer_api,
+            ]);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
             if ($payloadError !== null) {
@@ -167,7 +169,7 @@ class Arenagamer extends AdminController
         }
 
         if ($this->input->post()) {
-            $updateOptions = ['is_update' => true];
+            $updateOptions = ['is_update' => true, 'api' => $this->arenagamer_api];
             $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
@@ -936,6 +938,9 @@ class Arenagamer extends AdminController
                 'arenagamer_max_tournaments_per_team'      => $this->input->post('unlimited_tournaments_per_team')
                     ? ''
                     : (string) max(1, (int) $this->input->post('max_tournaments_per_team')),
+                'arenagamer_max_tournaments_per_client'    => $this->input->post('unlimited_tournaments_per_client')
+                    ? ''
+                    : (string) max(1, (int) $this->input->post('max_tournaments_per_client')),
             ];
 
             $password = $this->input->post('admin_password');
@@ -966,11 +971,14 @@ class Arenagamer extends AdminController
             }
 
             $teamSettingsPayload = [
-                'maxOwnedTeamsPerContact'        => (int) $settings['arenagamer_max_owned_teams'],
-                'maxParticipatedTeamsPerContact' => (int) $settings['arenagamer_max_participated_teams'],
+                'maxOwnedTeamsPerClient'        => (int) $settings['arenagamer_max_owned_teams'],
+                'maxParticipatedTeamsPerClient' => (int) $settings['arenagamer_max_participated_teams'],
                 'maxTournamentsPerTeam'          => $settings['arenagamer_max_tournaments_per_team'] === ''
                     ? null
                     : (int) $settings['arenagamer_max_tournaments_per_team'],
+                'maxTournamentsPerClient'        => $settings['arenagamer_max_tournaments_per_client'] === ''
+                    ? null
+                    : (int) $settings['arenagamer_max_tournaments_per_client'],
             ];
             $teamSettingsResult = $this->arenagamer_api->update_team_settings($teamSettingsPayload);
             if (!arenagamer_api_is_success($teamSettingsResult)) {
@@ -1009,6 +1017,41 @@ class Arenagamer extends AdminController
             : arenagamer_team_settings_local();
 
         $this->load->view('admin/settings/index', $data);
+    }
+
+    /**
+     * Pesquisa jogos (presets) para autocomplete no formulário de torneio.
+     */
+    public function search_presets()
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        if (!staff_can('view', 'arenagamer')) {
+            echo json_encode(['success' => false, 'message' => 'Sem permissão', 'data' => []], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $query = arenagamer_preset_search_term_from_input($this->input);
+        if (mb_strlen($query) < 3) {
+            echo json_encode(['success' => true, 'data' => []], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $response = $this->arenagamer_api->search_presets($query, true);
+        if (!arenagamer_api_is_success($response)) {
+            echo json_encode([
+                'success' => false,
+                'message' => $this->arenagamer_api->get_last_error(),
+                'data'    => [],
+            ], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $items = arenagamer_filter_presets_by_search(arenagamer_api_data($response, []), $query);
+        echo json_encode([
+            'success' => true,
+            'data'    => $items,
+        ], JSON_UNESCAPED_UNICODE);
     }
 
     /**

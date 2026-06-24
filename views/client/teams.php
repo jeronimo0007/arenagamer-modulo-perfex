@@ -16,12 +16,17 @@ $t = $editTeam ?? [];
 
         <div class="alert alert-info">
             <strong>Regras atuais:</strong>
-            máximo <?php echo (int) ($teamSettings['maxOwnedTeamsPerContact'] ?? 1); ?> time(s) como dono,
-            participação em até <?php echo (int) ($teamSettings['maxParticipatedTeamsPerContact'] ?? 3); ?> time(s).
+            máximo <?php echo (int) ($teamSettings['maxOwnedTeamsPerClient'] ?? $teamSettings['maxOwnedTeamsPerContact'] ?? 1); ?> time(s) como dono,
+            participação em até <?php echo (int) ($teamSettings['maxParticipatedTeamsPerClient'] ?? $teamSettings['maxParticipatedTeamsPerContact'] ?? 3); ?> time(s).
             <?php if (!empty($teamSettings['unlimitedTournamentsPerTeam'])): ?>
-            Cada time pode participar de quantos torneios desejar.
+            Cada equipe pode participar de quantos campeonatos desejar.
             <?php elseif (!empty($teamSettings['maxTournamentsPerTeam'])): ?>
-            Limite de <?php echo (int) $teamSettings['maxTournamentsPerTeam']; ?> torneio(s) por time.
+            Limite de <?php echo (int) $teamSettings['maxTournamentsPerTeam']; ?> campeonato(s) simultâneo(s) por equipe.
+            <?php endif; ?>
+            <?php if (!empty($teamSettings['unlimitedTournamentsPerClient'])): ?>
+            Cada cliente pode participar de quantos campeonatos desejar.
+            <?php elseif (!empty($teamSettings['maxTournamentsPerClient'])): ?>
+            Limite de <?php echo (int) $teamSettings['maxTournamentsPerClient']; ?> campeonato(s) simultâneo(s) por cliente.
             <?php endif; ?>
         </div>
 

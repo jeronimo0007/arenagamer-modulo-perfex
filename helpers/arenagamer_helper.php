@@ -146,6 +146,95 @@ function arenagamer_tournament_prize_type_label($prizeType)
     return $labels[$prizeType] ?? htmlspecialchars((string) $prizeType);
 }
 
+function arenagamer_tournament_prize_funding_labels()
+{
+    return [
+        'FIXED'      => 'Prêmio fixo',
+        'ENTRY_FEES' => 'Por arrecadação (taxas de inscrição)',
+    ];
+}
+
+function arenagamer_tournament_prize_funding_options()
+{
+    return array_keys(arenagamer_tournament_prize_funding_labels());
+}
+
+function arenagamer_tournament_prize_funding_label($funding)
+{
+    $labels = arenagamer_tournament_prize_funding_labels();
+
+    return $labels[$funding] ?? htmlspecialchars((string) $funding);
+}
+
+/**
+ * Resolve fonte do prêmio a partir dos dados do torneio (compatível com registros antigos).
+ */
+function arenagamer_tournament_resolve_prize_funding(array $tournament)
+{
+    $funding = strtoupper(trim((string) ($tournament['prizeFunding'] ?? '')));
+    if ($funding !== '') {
+        return $funding;
+    }
+
+    return 'FIXED';
+}
+
+/**
+ * Créditos do prêmio fixo cobrados na criação (automático + prêmio fixo).
+ */
+function arenagamer_tournament_prize_pool_creation_cost($prizeType, $prizeFunding, $prizePool)
+{
+    if ($prizeType === 'AUTOMATIC' && $prizeFunding === 'FIXED') {
+        return max(0, (float) $prizePool);
+    }
+
+    return 0.0;
+}
+
+/**
+ * Valida e normaliza regras de prêmio/taxa do torneio.
+ *
+ * @return string|null Mensagem de erro ou null
+ */
+function arenagamer_validate_tournament_prize_settings(array &$payload)
+{
+    $prizeType = strtoupper(trim((string) ($payload['prizeType'] ?? 'MANUAL')));
+    $prizeFunding = strtoupper(trim((string) ($payload['prizeFunding'] ?? 'FIXED')));
+    $prizePool = max(0, (float) ($payload['prizePool'] ?? 0));
+    $entryFee = max(0, (float) ($payload['entryFeeCredits'] ?? 0));
+    $fee = (float) ($payload['feePercentage'] ?? 0);
+
+    if ($prizeFunding === 'ENTRY_FEES') {
+        if ($prizeType !== 'AUTOMATIC') {
+            return 'Prêmio por arrecadação só é permitido com distribuição automática.';
+        }
+        if ($entryFee <= 0) {
+            return 'Informe a taxa de inscrição para prêmio por arrecadação.';
+        }
+        if ($fee < 0 || $fee > 100) {
+            return 'A taxa do organizador deve estar entre 0% e 100%.';
+        }
+        if (fmod($fee, 5) > 0.00001) {
+            return 'A taxa do organizador deve ser de 5% em 5% (0%, 5%, 10%...).';
+        }
+        $payload['prizePool'] = 0;
+        $payload['feePercentage'] = round($fee);
+        $payload['entryFeeCredits'] = $entryFee;
+    } else {
+        $payload['feePercentage'] = 0;
+        $payload['prizePool'] = $prizePool;
+        $payload['entryFeeCredits'] = $entryFee >= 0 ? $entryFee : 0;
+        if ($prizeType === 'AUTOMATIC' && $prizePool <= 0) {
+            return 'Distribuição automática com prêmio fixo exige valor do prêmio maior que zero.';
+        }
+    }
+
+    $payload['prizeType'] = $prizeType;
+    $payload['prizeFunding'] = $prizeFunding;
+
+    return null;
+}
+
 /**
  * Ordenação padrão das listagens de torneio (mais recentes primeiro).
  *
@@ -1378,7 +1467,11 @@ function arenagamer_plan_free_max_participants($plan)
  */
 function arenagamer_plan_allows_entry_fee($plan)
 {
-    return is_array($plan) && !empty($plan['allowsEntryFee']);
+    if (!is_array($plan) || !array_key_exists('allowsEntryFee', $plan)) {
+        return false;
+    }
+
+    return filter_var($plan['allowsEntryFee'], FILTER_VALIDATE_BOOLEAN);
 }
 
 /**
@@ -1398,17 +1491,39 @@ function arenagamer_creation_cost_allows_entry_fee($cost)
 }
 
 /**
- * Taxa de inscrição permitida na criação (plano ou criação acima do mínimo em créditos).
+ * Créditos efetivamente pagos na criação (após isenções do plano), usados para liberar taxa de inscrição.
  */
-function arenagamer_tournament_allows_entry_fee($plan, $participantsLimit, array $pricing = null)
+function arenagamer_tournament_entry_fee_paid_cost($plan, $participantsLimit, array $pricing = null, array $prizeOptions = [])
+{
+    $cost = arenagamer_calculate_tournament_creation_cost_with_plan($plan, $participantsLimit, $pricing);
+    $cost += arenagamer_tournament_prize_pool_creation_cost(
+        $prizeOptions['prizeType'] ?? 'MANUAL',
+        $prizeOptions['prizeFunding'] ?? 'FIXED',
+        $prizeOptions['prizePool'] ?? 0
+    );
+
+    return $cost;
+}
+
+/**
+ * Taxa de inscrição permitida na criação (plano ou 5+ créditos pagos além das isenções).
+ */
+function arenagamer_tournament_allows_entry_fee($plan, $participantsLimit, array $pricing = null, array $prizeOptions = [])
 {
     if (arenagamer_plan_allows_entry_fee($plan)) {
         return true;
     }
 
-    $cost = arenagamer_calculate_tournament_creation_cost_with_plan($plan, $participantsLimit, $pricing);
+    $paidCost = arenagamer_tournament_entry_fee_paid_cost($plan, $participantsLimit, $pricing, $prizeOptions);
 
-    return arenagamer_creation_cost_allows_entry_fee($cost);
+    return arenagamer_creation_cost_allows_entry_fee($paidCost);
+}
+
+function arenagamer_entry_fee_unlock_message()
+{
+    return 'Liberada após gastar '
+        . arenagamer_format_credits(arenagamer_entry_fee_min_creation_cost())
+        . ' na criação (além da isenção do plano) ou com plano que inclui esse benefício.';
 }
 
 /**
@@ -1416,16 +1531,34 @@ function arenagamer_tournament_allows_entry_fee($plan, $participantsLimit, array
  *
  * @return string|null Mensagem de erro ou null se válido
  */
-function arenagamer_validate_tournament_against_plan($plan, $participantsLimit, $entryFeeCredits = 0, array $pricing = null)
+function arenagamer_validate_tournament_against_plan($plan, $participantsLimit, $entryFeeCredits = 0, array $pricing = null, $prizeFunding = 'FIXED', array $prizeOptions = [])
 {
     if (!arenagamer_plan_is_active($plan)) {
         return 'Plano ativo necessário para criar torneios.';
     }
 
-    if ((float) $entryFeeCredits > 0 && !arenagamer_tournament_allows_entry_fee($plan, $participantsLimit, $pricing)) {
-        return 'Taxa de inscrição só é permitida a partir de '
+    $funding = strtoupper(trim((string) $prizeFunding));
+    $prizeOptions = array_merge([
+        'prizeType'    => 'MANUAL',
+        'prizeFunding' => $funding,
+        'prizePool'    => 0,
+    ], $prizeOptions);
+
+    if ($funding === 'ENTRY_FEES') {
+        $prizeOptions['prizeFunding'] = 'ENTRY_FEES';
+        $prizeOptions['prizePool'] = 0;
+    }
+
+    $requiresEntryFeeBenefit = $funding === 'ENTRY_FEES' || (float) $entryFeeCredits > 0;
+
+    if ($requiresEntryFeeBenefit && !arenagamer_tournament_allows_entry_fee($plan, $participantsLimit, $pricing, $prizeOptions)) {
+        if ($funding === 'ENTRY_FEES') {
+            return 'Seu plano não permite prêmio por arrecadação. ' . arenagamer_entry_fee_unlock_message();
+        }
+
+        return 'Taxa de inscrição só é permitida com plano que inclui esse benefício ou após gastar '
             . arenagamer_format_credits(arenagamer_entry_fee_min_creation_cost())
-            . ' na criação ou se seu plano inclui esse benefício.';
+            . ' na criação além da isenção do plano.';
     }
 
     return null;
@@ -1436,9 +1569,14 @@ function arenagamer_validate_tournament_against_plan($plan, $participantsLimit, 
  *
  * @return string|null Mensagem de erro ou null se válido
  */
-function arenagamer_validate_tournament_wallet_balance($plan, $participantsLimit, $walletResponse, array $pricing = null)
+function arenagamer_validate_tournament_wallet_balance($plan, $participantsLimit, $walletResponse, array $pricing = null, array $prizeOptions = [])
 {
     $cost = arenagamer_calculate_tournament_creation_cost_with_plan($plan, $participantsLimit, $pricing);
+    $cost += arenagamer_tournament_prize_pool_creation_cost(
+        $prizeOptions['prizeType'] ?? 'MANUAL',
+        $prizeOptions['prizeFunding'] ?? 'FIXED',
+        $prizeOptions['prizePool'] ?? 0
+    );
 
     if ($cost <= 0) {
         return null;
@@ -1912,9 +2050,13 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
     $registrationDeadline = trim((string) $input->post('registration_deadline'));
     $resolvedPresetId = ($presetId === '' || $presetId === null) ? null : (int) $presetId;
     $presetGameImageLocked = false;
+    $selectedPreset = null;
 
     if ($resolvedPresetId) {
         $selectedPreset = arenagamer_find_preset_by_id($presets, $resolvedPresetId);
+        if (!$selectedPreset && !empty($options['api'])) {
+            $selectedPreset = arenagamer_fetch_preset_by_id($options['api'], $resolvedPresetId);
+        }
         if ($selectedPreset && arenagamer_preset_blocks_game_image_upload($selectedPreset)) {
             $presetGameImageLocked = true;
         }
@@ -1922,7 +2064,6 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
 
     $payload = [
         'name'                 => trim((string) $input->post('name')),
-        'gameName'             => trim((string) $input->post('game_name')),
         'description'          => trim((string) $input->post('description')),
         'type'                 => (string) $input->post('type'),
         'format'               => (string) $input->post('format'),
@@ -1931,7 +2072,9 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         'presetId'             => $resolvedPresetId,
         'entryFeeCredits'      => (float) str_replace(',', '.', (string) $input->post('entry_fee_credits')),
         'feePercentage'        => (float) str_replace(',', '.', (string) $input->post('fee_percentage')),
-        'prizeType'            => (string) ($input->post('prize_type') ?: 'AUTOMATIC'),
+        'prizeType'            => strtoupper(trim((string) ($input->post('prize_type') ?: 'MANUAL'))),
+        'prizeFunding'         => strtoupper(trim((string) ($input->post('prize_funding') ?: 'FIXED'))),
+        'prizePool'            => (float) str_replace(',', '.', (string) $input->post('prize_pool')),
         'groupsCount'          => arenagamer_post_optional_int($input, 'groups_count'),
         'teamsPerGroup'        => arenagamer_post_optional_int($input, 'teams_per_group'),
         'advancePerGroup'      => arenagamer_post_optional_int($input, 'advance_per_group'),
@@ -1955,6 +2098,28 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         $payload['participantsLimit'] = max(2, (int) $input->post('participants_limit'));
     }
 
+    if (($payload['format'] ?? '') === 'TEAM') {
+        $minPlayers = (int) $input->post('min_players_per_team');
+        $maxPlayers = (int) $input->post('max_players_per_team');
+        if ($minPlayers > 0) {
+            $payload['minPlayersPerTeam'] = $minPlayers;
+        }
+        if ($maxPlayers > 0) {
+            $payload['maxPlayersPerTeam'] = $maxPlayers;
+        }
+    }
+
+    if (($payload['type'] ?? '') !== 'GROUP_STAGE') {
+        $payload['groupsCount'] = null;
+        $payload['teamsPerGroup'] = null;
+        $payload['advancePerGroup'] = null;
+    }
+
+    $prizeError = arenagamer_validate_tournament_prize_settings($payload);
+    if ($prizeError !== null) {
+        $payload['_prize_error'] = $prizeError;
+    }
+
     $skipUploadFields = $presetGameImageLocked ? ['game_image_file'] : [];
     $uploadError = arenagamer_apply_tournament_image_uploads($payload, $input, $skipUploadFields);
     if ($uploadError !== null) {
@@ -1964,6 +2129,15 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
     $dateError = arenagamer_validate_tournament_dates($payload);
     if ($dateError !== null) {
         $payload['_date_error'] = $dateError;
+    }
+
+    if (!$resolvedPresetId) {
+        $payload['gameName'] = trim((string) $input->post('game_name'));
+        if ($payload['gameName'] === '') {
+            $payload['_game_name_error'] = 'Informe o nome do jogo ou selecione um jogo predefinido.';
+        }
+    } elseif (!$selectedPreset) {
+        $payload['_preset_error'] = 'Jogo predefinido selecionado não encontrado ou indisponível.';
     }
 
     $userType = is_array($authUser) ? ($authUser['userType'] ?? '') : '';
@@ -2137,12 +2311,16 @@ function arenagamer_profile_payload_from_input($input)
 function arenagamer_team_settings_local()
 {
     return [
-        'maxOwnedTeamsPerContact'        => (int) get_option('arenagamer_max_owned_teams') ?: 1,
-        'maxParticipatedTeamsPerContact' => (int) get_option('arenagamer_max_participated_teams') ?: 3,
+        'maxOwnedTeamsPerClient'        => (int) get_option('arenagamer_max_owned_teams') ?: 1,
+        'maxParticipatedTeamsPerClient' => (int) get_option('arenagamer_max_participated_teams') ?: 3,
         'maxTournamentsPerTeam'          => get_option('arenagamer_max_tournaments_per_team') !== ''
             ? (int) get_option('arenagamer_max_tournaments_per_team')
             : null,
+        'maxTournamentsPerClient'        => get_option('arenagamer_max_tournaments_per_client') !== ''
+            ? (int) get_option('arenagamer_max_tournaments_per_client')
+            : null,
         'unlimitedTournamentsPerTeam'  => get_option('arenagamer_max_tournaments_per_team') === '',
+        'unlimitedTournamentsPerClient' => get_option('arenagamer_max_tournaments_per_client') === '',
     ];
 }
 
@@ -2262,12 +2440,12 @@ function arenagamer_validate_tournament_dates(array $payload)
 
     $deadline = arenagamer_parse_form_datetime($payload['registrationDeadline'] ?? null);
     if ($deadline !== null && $deadline < $opens) {
-        return 'O prazo de inscrição não pode ser anterior à abertura prevista das inscrições.';
+        return 'O prazo máximo de inscrição não pode ser anterior à abertura prevista das inscrições.';
     }
 
     $start = arenagamer_parse_form_datetime($payload['startDate'] ?? null);
     if ($start !== null && $deadline !== null && $start < $deadline) {
-        return 'A data de início não pode ser anterior ao prazo de inscrição.';
+        return 'A data de início não pode ser anterior ao prazo máximo de inscrição.';
     }
 
     $end = arenagamer_parse_form_datetime($payload['expectedEndDate'] ?? null);
@@ -2291,6 +2469,18 @@ function arenagamer_tournament_payload_error(array $payload)
         return (string) $payload['_date_error'];
     }
 
+    if (!empty($payload['_preset_error'])) {
+        return (string) $payload['_preset_error'];
+    }
+
+    if (!empty($payload['_game_name_error'])) {
+        return (string) $payload['_game_name_error'];
+    }
+
+    if (!empty($payload['_prize_error'])) {
+        return (string) $payload['_prize_error'];
+    }
+
     return null;
 }
 
@@ -2299,7 +2489,7 @@ function arenagamer_tournament_payload_error(array $payload)
  */
 function arenagamer_tournament_sanitize_payload(array $payload)
 {
-    unset($payload['_upload_error'], $payload['_date_error']);
+    unset($payload['_upload_error'], $payload['_date_error'], $payload['_preset_error'], $payload['_game_name_error'], $payload['_prize_error']);
 
     return $payload;
 }
@@ -2445,6 +2635,74 @@ function arenagamer_presets_autofill_map(array $presets)
 }
 
 /**
+ * Filtra presets pelo termo digitado (prefixo no nome ou plataforma).
+ */
+function arenagamer_filter_presets_by_search(array $items, $query)
+{
+    $needle = mb_strtolower(trim((string) $query));
+    if (mb_strlen($needle) < 3) {
+        return [];
+    }
+
+    return array_values(array_filter($items, function ($preset) use ($needle) {
+        if (!is_array($preset)) {
+            return false;
+        }
+
+        $name = mb_strtolower(trim((string) ($preset['gameName'] ?? '')));
+        $platform = mb_strtolower(trim((string) ($preset['platform'] ?? '')));
+
+        return ($name !== '' && mb_strpos($name, $needle) === 0)
+            || ($platform !== '' && mb_strpos($platform, $needle) === 0);
+    }));
+}
+
+/**
+ * Lê o termo de busca de presets (query string).
+ */
+function arenagamer_preset_search_term_from_input($input)
+{
+    $term = trim((string) $input->get('term'));
+    if ($term === '') {
+        $term = trim((string) $input->get('q'));
+    }
+    if ($term === '' && isset($_GET['term'])) {
+        $term = trim((string) $_GET['term']);
+    }
+    if ($term === '' && isset($_GET['q'])) {
+        $term = trim((string) $_GET['q']);
+    }
+
+    return $term;
+}
+
+/**
+ * Busca um preset na API quando não está na lista em memória.
+ *
+ * @param ArenaGamer_api|null $api
+ */
+function arenagamer_fetch_preset_by_id($api, $id)
+{
+    $id = (int) $id;
+    if ($id <= 0 || $api === null) {
+        return null;
+    }
+
+    if (!$api->is_contact_context()) {
+        $response = $api->get_preset($id);
+        if (!arenagamer_api_is_success($response)) {
+            return null;
+        }
+
+        $preset = arenagamer_api_data($response);
+        return is_array($preset) ? $preset : null;
+    }
+
+    $response = $api->search_presets(null);
+    return arenagamer_find_preset_by_id($response, $id);
+}
+
+/**
  * Busca preset pelo ID na lista retornada pela API.
  */
 function arenagamer_find_preset_by_id($presets, $id)
@@ -2490,18 +2748,18 @@ function arenagamer_tournament_game_image_locked_by_preset(array $tournament, $p
 }
 
 /**
- * Nome do jogo do torneio (campo próprio ou preset).
+ * Nome do jogo do torneio (definido pelo preset selecionado).
  */
 function arenagamer_tournament_game_name(array $tournament, $default = '—')
 {
-    $gameName = trim((string) ($tournament['gameName'] ?? ''));
-    if ($gameName !== '') {
-        return $gameName;
-    }
-
     $presetName = trim((string) ($tournament['presetName'] ?? ''));
     if ($presetName !== '') {
         return $presetName;
+    }
+
+    $gameName = trim((string) ($tournament['gameName'] ?? ''));
+    if ($gameName !== '') {
+        return $gameName;
     }
 
     return $default;

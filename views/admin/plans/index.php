@@ -53,7 +53,7 @@ $plansData = is_array($plans_list ?? null) ? $plans_list : arenagamer_api_data($
                                 <li><strong>Máx. torneios/mês:</strong> <?php echo arenagamer_plan_max_tournaments_per_month($plan); ?></li>
                                 <li><strong>Máx. participantes grátis:</strong> <?php echo $plan['freeMaxParticipants'] ?? '—'; ?></li>
                                 <li><strong>Ordem:</strong> <?php echo $plan['sortOrder'] ?? '—'; ?></li>
-                                <li><strong>Permite taxa de entrada:</strong>
+                                <li><strong>Permite taxa de inscrição:</strong>
                                     <?php echo !empty($plan['allowsEntryFee']) ?
                                         '<span class="text-success"><i class="fa fa-check"></i> Sim</span>' :
                                         '<span class="text-danger"><i class="fa fa-times"></i> Não</span>'; ?>

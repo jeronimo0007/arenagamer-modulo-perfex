@@ -95,33 +95,51 @@
                         <h4 class="tw-font-semibold mtop15 mbot15">Regras de times</h4>
                         <?php
                         $teamSettings = is_array($team_settings ?? null) ? $team_settings : arenagamer_team_settings_local();
-                        $maxOwned = (int) ($teamSettings['maxOwnedTeamsPerContact'] ?? 1);
-                        $maxParticipated = (int) ($teamSettings['maxParticipatedTeamsPerContact'] ?? 3);
-                        $maxTournaments = $teamSettings['maxTournamentsPerTeam'] ?? null;
-                        $unlimitedTournaments = !empty($teamSettings['unlimitedTournamentsPerTeam']) || $maxTournaments === null;
+                        $maxOwned = (int) ($teamSettings['maxOwnedTeamsPerClient'] ?? $teamSettings['maxOwnedTeamsPerContact'] ?? 1);
+                        $maxParticipated = (int) ($teamSettings['maxParticipatedTeamsPerClient'] ?? $teamSettings['maxParticipatedTeamsPerContact'] ?? 3);
+                        $maxTournamentsTeam = $teamSettings['maxTournamentsPerTeam'] ?? null;
+                        $maxTournamentsClient = $teamSettings['maxTournamentsPerClient'] ?? null;
+                        $unlimitedTournamentsTeam = !empty($teamSettings['unlimitedTournamentsPerTeam']) || $maxTournamentsTeam === null;
+                        $unlimitedTournamentsClient = !empty($teamSettings['unlimitedTournamentsPerClient']) || $maxTournamentsClient === null;
                         ?>
                         <div class="row">
                             <div class="col-md-4">
                                 <div class="form-group">
-                                    <label for="max_owned_teams">Times como dono por contato</label>
+                                    <label for="max_owned_teams">Times como dono por cliente</label>
                                     <input type="number" min="1" name="max_owned_teams" id="max_owned_teams" class="form-control" value="<?php echo $maxOwned; ?>" required>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="form-group">
-                                    <label for="max_participated_teams">Participação em times por contato</label>
+                                    <label for="max_participated_teams">Participação em times por cliente</label>
                                     <input type="number" min="1" name="max_participated_teams" id="max_participated_teams" class="form-control" value="<?php echo $maxParticipated; ?>" required>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label for="max_tournaments_per_team">Campeonatos simultâneos por equipe</label>
+                                    <input type="number" min="1" name="max_tournaments_per_team" id="max_tournaments_per_team" class="form-control"
+                                           value="<?php echo $maxTournamentsTeam !== null ? (int) $maxTournamentsTeam : ''; ?>"
+                                           <?php echo $unlimitedTournamentsTeam ? 'disabled' : ''; ?>>
+                                    <label class="mtop5">
+                                        <input type="checkbox" name="unlimited_tournaments_per_team" value="1" id="unlimited_tournaments_per_team"
+                                            <?php echo $unlimitedTournamentsTeam ? 'checked' : ''; ?>>
+                                        Ilimitado
+                                    </label>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="form-group">
-                                    <label for="max_tournaments_per_team">Torneios por time</label>
-                                    <input type="number" min="1" name="max_tournaments_per_team" id="max_tournaments_per_team" class="form-control"
-                                           value="<?php echo $maxTournaments !== null ? (int) $maxTournaments : ''; ?>"
-                                           <?php echo $unlimitedTournaments ? 'disabled' : ''; ?>>
+                                    <label for="max_tournaments_per_client">Campeonatos simultâneos por cliente</label>
+                                    <input type="number" min="1" name="max_tournaments_per_client" id="max_tournaments_per_client" class="form-control"
+                                           value="<?php echo $maxTournamentsClient !== null ? (int) $maxTournamentsClient : ''; ?>"
+                                           <?php echo $unlimitedTournamentsClient ? 'disabled' : ''; ?>>
+                                    <p class="help-block">Inscrições solo ou em equipes em que o cliente participa.</p>
                                     <label class="mtop5">
-                                        <input type="checkbox" name="unlimited_tournaments_per_team" value="1" id="unlimited_tournaments_per_team"
-                                            <?php echo $unlimitedTournaments ? 'checked' : ''; ?>>
+                                        <input type="checkbox" name="unlimited_tournaments_per_client" value="1" id="unlimited_tournaments_per_client"
+                                            <?php echo $unlimitedTournamentsClient ? 'checked' : ''; ?>>
                                         Ilimitado
                                     </label>
                                 </div>
@@ -213,6 +231,13 @@ $('#unlimited_tournaments_per_team').on('change', function () {
     $('#max_tournaments_per_team').prop('disabled', this.checked);
     if (this.checked) {
         $('#max_tournaments_per_team').val('');
+    }
+});
+
+$('#unlimited_tournaments_per_client').on('change', function () {
+    $('#max_tournaments_per_client').prop('disabled', this.checked);
+    if (this.checked) {
+        $('#max_tournaments_per_client').val('');
     }
 });
 </script>

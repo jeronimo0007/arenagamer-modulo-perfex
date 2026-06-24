@@ -75,7 +75,7 @@ $formUrl = $isEdit ? admin_url('arenagamer/plan/' . (int) $plan['id']) : admin_u
                         <div class="checkbox checkbox-primary">
                             <input type="checkbox" name="allows_entry_fee" id="allows_entry_fee" value="1"
                                 <?php echo !empty($plan['allowsEntryFee']) ? 'checked' : ''; ?>>
-                            <label for="allows_entry_fee">Permite taxa de entrada</label>
+                            <label for="allows_entry_fee">Permite taxa de inscrição</label>
                         </div>
 
                         <div class="checkbox checkbox-primary">

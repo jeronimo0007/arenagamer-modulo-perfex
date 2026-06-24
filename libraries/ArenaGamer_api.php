@@ -453,14 +453,20 @@ class ArenaGamer_api
         }
 
         $payload = [
-            'maxOwnedTeamsPerContact'        => max(1, (int) ($data['maxOwnedTeamsPerContact'] ?? 1)),
-            'maxParticipatedTeamsPerContact' => max(1, (int) ($data['maxParticipatedTeamsPerContact'] ?? 3)),
+            'maxOwnedTeamsPerClient'        => max(1, (int) ($data['maxOwnedTeamsPerClient'] ?? $data['maxOwnedTeamsPerContact'] ?? 1)),
+            'maxParticipatedTeamsPerClient' => max(1, (int) ($data['maxParticipatedTeamsPerClient'] ?? $data['maxParticipatedTeamsPerContact'] ?? 3)),
         ];
 
         if (array_key_exists('maxTournamentsPerTeam', $data)) {
             $payload['maxTournamentsPerTeam'] = $data['maxTournamentsPerTeam'] === null || $data['maxTournamentsPerTeam'] === ''
                 ? null
                 : max(1, (int) $data['maxTournamentsPerTeam']);
+        }
+
+        if (array_key_exists('maxTournamentsPerClient', $data)) {
+            $payload['maxTournamentsPerClient'] = $data['maxTournamentsPerClient'] === null || $data['maxTournamentsPerClient'] === ''
+                ? null
+                : max(1, (int) $data['maxTournamentsPerClient']);
         }
 
         return $this->request('PUT', '/admin/team-settings', $payload);
@@ -493,6 +499,31 @@ class ArenaGamer_api
         }
 
         return $this->request('GET', '/admin/presets');
+    }
+
+    /**
+     * GET /common/presets ou GET /admin/presets — listar ou pesquisar jogos (presets).
+     *
+     * @param string|null $query Texto de busca (nome do jogo ou plataforma)
+     * @param bool        $activeOnly Apenas ativos (staff; clientes sempre recebem só ativos)
+     */
+    public function search_presets($query = null, $activeOnly = true)
+    {
+        $queryParams = [];
+
+        if ($query !== null && trim((string) $query) !== '') {
+            $queryParams['q'] = trim((string) $query);
+        }
+
+        if ($this->auth_context === 'contact') {
+            return $this->request('GET', '/common/presets', null, self::AUTH_BEARER, $queryParams);
+        }
+
+        if ($activeOnly) {
+            $queryParams['activeOnly'] = 'true';
+        }
+
+        return $this->request('GET', '/admin/presets', null, self::AUTH_BEARER, $queryParams);
     }
 
     public function get_preset($id)
@@ -913,7 +944,6 @@ class ArenaGamer_api
     {
         $payload = [
             'name'                 => trim((string) ($data['name'] ?? '')),
-            'gameName'             => trim((string) ($data['gameName'] ?? '')),
             'description'          => trim((string) ($data['description'] ?? '')),
             'type'                 => (string) ($data['type'] ?? 'SINGLE_ELIMINATION'),
             'format'               => (string) ($data['format'] ?? 'SOLO'),
@@ -930,15 +960,67 @@ class ArenaGamer_api
             $payload['participantsLimit'] = max(2, (int) ($data['participantsLimit'] ?? 20));
         }
 
-        if (array_key_exists('presetId', $data) && $data['presetId'] !== '' && $data['presetId'] !== null) {
-            $payload['presetId'] = (int) $data['presetId'];
+        if (array_key_exists('presetId', $data)) {
+            if ($data['presetId'] !== '' && $data['presetId'] !== null) {
+                $payload['presetId'] = (int) $data['presetId'];
+            } else {
+                $payload['presetId'] = null;
+            }
         } elseif (!$isUpdate) {
             $payload['presetId'] = null;
         }
 
+        if (array_key_exists('gameName', $data)) {
+            $value = trim((string) ($data['gameName'] ?? ''));
+            if ($value !== '') {
+                $payload['gameName'] = $value;
+            }
+        }
+
+        foreach (['prizeType', 'prizeFunding'] as $field) {
+            if (array_key_exists($field, $data) && ($data[$field] ?? '') !== '') {
+                $payload[$field] = (string) $data[$field];
+            }
+        }
+
+        if (array_key_exists('prizePool', $data)) {
+            $payload['prizePool'] = max(0, (float) ($data['prizePool'] ?? 0));
+        }
+
+        if (array_key_exists('entryFeeCredits', $data)) {
+            $payload['entryFeeCredits'] = max(0, (float) ($data['entryFeeCredits'] ?? 0));
+        }
+
+        if (array_key_exists('feePercentage', $data)) {
+            $payload['feePercentage'] = max(0, (float) ($data['feePercentage'] ?? 0));
+        }
+
         foreach (['groupsCount', 'teamsPerGroup', 'advancePerGroup', 'bestOf'] as $field) {
-            if (array_key_exists($field, $data) && $data[$field] !== '' && $data[$field] !== null) {
-                $payload[$field] = (int) $data[$field];
+            if (!array_key_exists($field, $data)) {
+                continue;
+            }
+            if ($data[$field] === '' || $data[$field] === null) {
+                if ($isUpdate) {
+                    $payload[$field] = null;
+                }
+                continue;
+            }
+            $payload[$field] = (int) $data[$field];
+        }
+
+        $format = (string) ($payload['format'] ?? 'SOLO');
+        if ($format === 'TEAM') {
+            if (array_key_exists('minPlayersPerTeam', $data)) {
+                $minPlayers = (int) ($data['minPlayersPerTeam'] ?? 0);
+                if ($minPlayers > 0) {
+                    $payload['minPlayersPerTeam'] = $minPlayers;
+                }
+            }
+            if (array_key_exists('maxPlayersPerTeam', $data)) {
+                $maxPlayers = (int) ($data['maxPlayersPerTeam'] ?? 0);
+                if ($maxPlayers > 0) {
+                    $payload['maxPlayersPerTeam'] = $maxPlayers;
+                }
             }
         }
 
@@ -969,11 +1051,6 @@ class ArenaGamer_api
                 $value = trim((string) ($data[$field] ?? ''));
                 $payload[$field] = $value !== '' ? $value : null;
             }
-        }
-
-        if (array_key_exists('gameName', $data)) {
-            $value = trim((string) ($data['gameName'] ?? ''));
-            $payload['gameName'] = $value !== '' ? $value : null;
         }
 
         if (array_key_exists('clientUserId', $data) && $data['clientUserId'] !== '' && $data['clientUserId'] !== null) {
@@ -1062,11 +1139,19 @@ class ArenaGamer_api
         );
     }
 
-    public function transfer_team_ownership($teamId, $newOwnerContactId)
+    public function transfer_team_ownership($teamId, $newOwnerClientUserId)
     {
         return $this->request(
             'POST',
-            '/common/teams/' . (int) $teamId . '/transfer/' . (int) $newOwnerContactId
+            '/common/teams/' . (int) $teamId . '/transfer/clients/' . (int) $newOwnerClientUserId
+        );
+    }
+
+    public function set_team_captain($teamId, $clientUserId)
+    {
+        return $this->request(
+            'POST',
+            '/common/teams/' . (int) $teamId . '/members/clients/' . (int) $clientUserId . '/captain'
         );
     }
 

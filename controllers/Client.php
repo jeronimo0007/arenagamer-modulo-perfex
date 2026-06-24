@@ -161,7 +161,9 @@ class Client extends ClientsController
         $data['wallet'] = arenagamer_api_is_success($walletResponse) ? arenagamer_api_data($walletResponse) : null;
 
         if ($this->input->post()) {
-            $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null);
+            $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, [
+                'api' => $this->api,
+            ]);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
             if ($payloadError !== null) {
@@ -188,7 +190,12 @@ class Client extends ClientsController
                 $data['current_plan'],
                 (int) ($payload['participantsLimit'] ?? 0),
                 (float) ($payload['entryFeeCredits'] ?? 0),
-                $data['tournament_pricing']
+                $data['tournament_pricing'],
+                $payload['prizeFunding'] ?? 'FIXED',
+                [
+                    'prizeType' => $payload['prizeType'] ?? 'MANUAL',
+                    'prizePool' => $payload['prizePool'] ?? 0,
+                ]
             );
 
             if ($planError !== null) {
@@ -205,7 +212,12 @@ class Client extends ClientsController
                 $data['current_plan'],
                 (int) ($payload['participantsLimit'] ?? 0),
                 $this->api->get_wallet_balance(),
-                $data['tournament_pricing']
+                $data['tournament_pricing'],
+                [
+                    'prizeType'    => $payload['prizeType'] ?? 'MANUAL',
+                    'prizeFunding' => $payload['prizeFunding'] ?? 'FIXED',
+                    'prizePool'    => $payload['prizePool'] ?? 0,
+                ]
             );
 
             if ($walletError !== null) {
@@ -277,7 +289,7 @@ class Client extends ClientsController
         }
 
         if ($this->input->post()) {
-            $updateOptions = ['is_update' => true];
+            $updateOptions = ['is_update' => true, 'api' => $this->api];
             $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
@@ -353,6 +365,14 @@ class Client extends ClientsController
         $data['primary_contacts'] = [];
         $data['permission_rows'] = [];
         $data['can_grant_permissions'] = arenagamer_contact_is_primary($data['auth_user']);
+        $data['my_teams'] = [];
+
+        if (is_array($tournamentData) && ($tournamentData['format'] ?? '') === 'TEAM') {
+            $teamsResponse = $this->api->get_my_teams();
+            if (arenagamer_api_is_success($teamsResponse)) {
+                $data['my_teams'] = arenagamer_api_data($teamsResponse, []);
+            }
+        }
 
         if ($data['can_manage'] && !empty($tournamentData['clientUserId'])) {
             $managersResponse = $this->api->get_tournament_managers($slug);
@@ -429,10 +449,28 @@ class Client extends ClientsController
 
     public function join_tournament($slug)
     {
-        $result = $this->api->join_tournament_solo($slug, [
-            'availableWindows' => $this->input->post('available_windows') ?: [],
-            'preferWeekends'     => (bool) $this->input->post('prefer_weekends'),
-        ]);
+        $tournament = $this->api->get_tournament($slug);
+        $tournamentData = arenagamer_api_data($tournament);
+        $isTeam = is_array($tournamentData) && ($tournamentData['format'] ?? '') === 'TEAM';
+
+        if ($isTeam) {
+            $teamId = (int) $this->input->post('team_id');
+            if ($teamId <= 0) {
+                set_alert('danger', 'Selecione um time para se inscrever neste campeonato.');
+                redirect(arenagamer_client_url('tournament_detail/' . $slug));
+            }
+
+            $result = $this->api->join_tournament_team($slug, [
+                'teamId'           => $teamId,
+                'availableWindows' => $this->input->post('available_windows') ?: [],
+                'preferWeekends'   => (bool) $this->input->post('prefer_weekends'),
+            ]);
+        } else {
+            $result = $this->api->join_tournament_solo($slug, [
+                'availableWindows' => $this->input->post('available_windows') ?: [],
+                'preferWeekends'     => (bool) $this->input->post('prefer_weekends'),
+            ]);
+        }
 
         if (arenagamer_api_is_success($result)) {
             set_alert('success', arenagamer_api_message($result, 'Inscrição realizada com sucesso'));
@@ -953,5 +991,44 @@ class Client extends ClientsController
         $this->data($data);
         $this->view('client/plans');
         $this->layout();
+    }
+
+    /**
+     * Pesquisa jogos (presets) para autocomplete no formulário de torneio.
+     */
+    public function search_presets()
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        if (!empty($this->data['arenagamer_needs_relink'])) {
+            echo json_encode(['success' => false, 'message' => 'Conta ArenaGamer não conectada.', 'data' => []], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $query = arenagamer_preset_search_term_from_input($this->input);
+        if (mb_strlen($query) < 3) {
+            echo json_encode(['success' => true, 'data' => []], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $response = $this->api->search_presets($query);
+        if (!arenagamer_api_is_success($response)) {
+            echo json_encode([
+                'success' => false,
+                'message' => $this->api->get_last_error(),
+                'data'    => [],
+            ], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $items = arenagamer_filter_presets_by_search(arenagamer_api_data($response, []), $query);
+        $items = array_values(array_filter($items, function ($preset) {
+            return !is_array($preset) || !array_key_exists('active', $preset) || !empty($preset['active']);
+        }));
+
+        echo json_encode([
+            'success' => true,
+            'data'    => $items,
+        ], JSON_UNESCAPED_UNICODE);
     }
 }
