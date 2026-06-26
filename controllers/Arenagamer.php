@@ -990,7 +990,10 @@ class Arenagamer extends AdminController
 
         if ($this->input->post()) {
             $settings = [
-                'arenagamer_api_url'        => $this->input->post('api_url'),
+                'arenagamer_api_url_auth'    => rtrim((string) $this->input->post('api_url_auth'), '/'),
+                'arenagamer_api_url_common'  => rtrim((string) $this->input->post('api_url_common'), '/'),
+                'arenagamer_api_url_admin'   => rtrim((string) $this->input->post('api_url_admin'), '/'),
+                'arenagamer_api_url_public'  => rtrim((string) $this->input->post('api_url_public'), '/'),
                 'arenagamer_admin_email'     => $this->input->post('admin_email'),
                 'arenagamer_auto_sync'       => $this->input->post('auto_sync') ? '1' : '0',
                 'arenagamer_sync_interval'   => $this->input->post('sync_interval'),

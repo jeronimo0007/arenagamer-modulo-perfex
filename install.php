@@ -5,7 +5,13 @@ defined('BASEPATH') or exit('No direct script access allowed');
 $CI = &get_instance();
 
 // Add module options
-add_option('arenagamer_api_url', 'http://localhost:8080');
+// API quebrada em 4 microserviços independentes, cada um com domínio próprio.
+add_option('arenagamer_api_url_auth', 'https://auth.omnyarena.com');
+add_option('arenagamer_api_url_common', 'https://common.omnyarena.com');
+add_option('arenagamer_api_url_admin', 'https://admin.omnyarena.com');
+add_option('arenagamer_api_url_public', 'https://public.omnyarena.com');
+// URL legada (monólito) — mantida como fallback para instalações antigas.
+add_option('arenagamer_api_url', '');
 add_option('arenagamer_api_token', '');
 add_option('arenagamer_refresh_token', '');
 add_option('arenagamer_admin_email', '');

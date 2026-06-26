@@ -137,7 +137,10 @@
                         <h4 class="panel-title">Status da API</h4>
                     </div>
                     <div class="panel-body">
-                        <p>URL: <code><?php echo get_option('arenagamer_api_url'); ?></code></p>
+                        <p class="tw-mb-1"><strong>Auth:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_auth')); ?></code></p>
+                        <p class="tw-mb-1"><strong>Common:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_common')); ?></code></p>
+                        <p class="tw-mb-1"><strong>Admin:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_admin')); ?></code></p>
+                        <p><strong>Public:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_public')); ?></code></p>
                         <button id="btn-test-api" class="btn btn-default btn-xs" onclick="testApiConnection()">
                             <i class="fa fa-plug"></i> Testar Conexão
                         </button>

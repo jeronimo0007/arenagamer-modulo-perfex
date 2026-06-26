@@ -18,12 +18,49 @@
                     <div class="panel-body">
                         <?php echo form_open(admin_url('arenagamer/settings')); ?>
 
+                        <p class="text-muted">
+                            A API foi dividida em <strong>4 microserviços independentes</strong>, cada um com seu
+                            domínio. Informe a URL base de cada serviço (o módulo adiciona automaticamente
+                            <code>/api/v1</code>; o Swagger fica em <code>/swagger-ui</code>).
+                        </p>
+
+                        <?php
+                        $authUrl   = get_option('arenagamer_api_url_auth') ?: 'https://auth.omnyarena.com';
+                        $commonUrl = get_option('arenagamer_api_url_common') ?: 'https://common.omnyarena.com';
+                        $adminUrl  = get_option('arenagamer_api_url_admin') ?: 'https://admin.omnyarena.com';
+                        $publicUrl = get_option('arenagamer_api_url_public') ?: 'https://public.omnyarena.com';
+                        ?>
+
                         <div class="form-group">
-                            <label for="api_url">URL da API</label>
-                            <input type="url" name="api_url" id="api_url" class="form-control"
-                                   value="<?php echo get_option('arenagamer_api_url'); ?>"
-                                   placeholder="http://localhost:8080" required>
-                            <small class="text-muted">URL do servidor (conforme Swagger). O módulo adiciona automaticamente <code>/api/v1</code>.</small>
+                            <label for="api_url_auth">URL do serviço Auth</label>
+                            <input type="url" name="api_url_auth" id="api_url_auth" class="form-control"
+                                   value="<?php echo htmlspecialchars((string) $authUrl); ?>"
+                                   placeholder="https://auth.omnyarena.com" required>
+                            <small class="text-muted">Login, registro, refresh, perfil do usuário e avatar (<code>/public/auth/*</code>, <code>/common/auth/*</code>, <code>/common/users/*</code>).</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="api_url_common">URL do serviço Common</label>
+                            <input type="url" name="api_url_common" id="api_url_common" class="form-control"
+                                   value="<?php echo htmlspecialchars((string) $commonUrl); ?>"
+                                   placeholder="https://common.omnyarena.com" required>
+                            <small class="text-muted">Torneios, times, carteira, assinaturas, presets e uploads (<code>/common/*</code>).</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="api_url_admin">URL do serviço Admin</label>
+                            <input type="url" name="api_url_admin" id="api_url_admin" class="form-control"
+                                   value="<?php echo htmlspecialchars((string) $adminUrl); ?>"
+                                   placeholder="https://admin.omnyarena.com" required>
+                            <small class="text-muted">Painel staff: planos, presets, assinaturas, carteira, auditoria (<code>/admin/*</code>).</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="api_url_public">URL do serviço Public</label>
+                            <input type="url" name="api_url_public" id="api_url_public" class="form-control"
+                                   value="<?php echo htmlspecialchars((string) $publicUrl); ?>"
+                                   placeholder="https://public.omnyarena.com" required>
+                            <small class="text-muted">Catálogo público com HTTP Basic: torneios, times, planos, presets (<code>/public/*</code>).</small>
                         </div>
 
                         <div class="alert alert-info">
@@ -210,7 +247,10 @@
                     <div class="panel-body">
                         <ul class="list-unstyled">
                             <li><strong>Módulo:</strong> ArenaGamer v1.0.0</li>
-                            <li><strong>API URL:</strong> <code><?php echo get_option('arenagamer_api_url'); ?></code></li>
+                            <li><strong>Auth:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_auth')); ?></code></li>
+                            <li><strong>Common:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_common')); ?></code></li>
+                            <li><strong>Admin:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_admin')); ?></code></li>
+                            <li><strong>Public:</strong> <code><?php echo htmlspecialchars((string) get_option('arenagamer_api_url_public')); ?></code></li>
                             <li><strong>Token:</strong>
                                 <?php echo get_option('arenagamer_api_token') ?
                                     '<span class="text-success">Configurado</span>' :

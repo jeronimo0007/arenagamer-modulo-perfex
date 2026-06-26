@@ -24,8 +24,17 @@ class ArenaGamer_api
     /** @var string HTTP Basic (email + senha) para catálogo público */
     private const AUTH_BASIC = 'basic';
 
+    /** Defaults dos 4 microserviços (cada um com domínio próprio) */
+    private const DEFAULT_URLS = [
+        'auth'   => 'https://auth.omnyarena.com',
+        'common' => 'https://common.omnyarena.com',
+        'admin'  => 'https://admin.omnyarena.com',
+        'public' => 'https://public.omnyarena.com',
+    ];
+
     private $CI;
-    private $api_url;
+    /** @var array<string,string> URL base de cada microserviço (auth/common/admin/public) */
+    private $service_urls = [];
     private $auth_context;
     private $token;
     private $refresh_token;
@@ -42,7 +51,7 @@ class ArenaGamer_api
 
         $this->CI = &get_instance();
         $this->CI->load->helper('arenagamer/arenagamer');
-        $this->api_url = $this->normalize_api_url(get_option('arenagamer_api_url'));
+        $this->load_service_urls();
         $this->auth_context = ($config['context'] ?? 'staff') === 'contact' ? 'contact' : 'staff';
         $this->contact_id = (int) ($config['contact_id'] ?? 0);
         $this->load_auth_state();
@@ -1602,7 +1611,7 @@ class ArenaGamer_api
 
     private function build_url($endpoint, array $query = [])
     {
-        $url = $this->api_url . self::API_PREFIX . $endpoint;
+        $url = $this->resolve_service_url($endpoint) . self::API_PREFIX . $endpoint;
         if (empty($query)) {
             return $url;
         }
@@ -1640,6 +1649,62 @@ class ArenaGamer_api
         }
 
         return rtrim($url, '/');
+    }
+
+    /**
+     * Carrega a URL base de cada microserviço a partir das options.
+     * Cada serviço tem domínio próprio; se a option não estiver configurada,
+     * usa o domínio padrão *.omnyarena.com.
+     */
+    private function load_service_urls()
+    {
+        foreach (self::DEFAULT_URLS as $service => $default) {
+            $configured = $this->normalize_api_url(get_option('arenagamer_api_url_' . $service));
+
+            $this->service_urls[$service] = $configured !== ''
+                ? $configured
+                : rtrim($default, '/');
+        }
+    }
+
+    /**
+     * Determina qual microserviço atende o endpoint.
+     *
+     * - auth:   /public/auth/*, /common/auth/*, /common/users/*
+     * - admin:  /admin/*
+     * - public: demais /public/*
+     * - common: demais /common/*
+     */
+    private function resolve_service_url($endpoint)
+    {
+        $endpoint = '/' . ltrim((string) $endpoint, '/');
+
+        if (
+            strpos($endpoint, '/public/auth') === 0
+            || strpos($endpoint, '/common/auth') === 0
+            || strpos($endpoint, '/common/users') === 0
+        ) {
+            return $this->service_url('auth');
+        }
+
+        if (strpos($endpoint, '/admin') === 0) {
+            return $this->service_url('admin');
+        }
+
+        if (strpos($endpoint, '/public') === 0) {
+            return $this->service_url('public');
+        }
+
+        return $this->service_url('common');
+    }
+
+    private function service_url($service)
+    {
+        if (!empty($this->service_urls[$service])) {
+            return $this->service_urls[$service];
+        }
+
+        return rtrim(self::DEFAULT_URLS[$service] ?? '', '/');
     }
 
     private function pageable($page, $size, array $sort = [])

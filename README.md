@@ -19,9 +19,14 @@ cp -r arenagamer /path/to/perfex/modules/
 
 Após ativar o módulo, acesse **ArenaGamer → Configurações** e preencha:
 
+A API foi dividida em 4 microserviços independentes, cada um com seu próprio domínio. Informe a URL base de cada serviço (o módulo adiciona `/api/v1` automaticamente; o Swagger fica em `/swagger-ui`):
+
 | Campo | Descrição |
 |-------|-----------|
-| URL da API | URL base da ArenaGamer API (ex: `http://localhost:8080/api/v1`) |
+| URL do serviço Auth | Login, registro, refresh, perfil e avatar (ex: `https://auth.omnyarena.com`) |
+| URL do serviço Common | Torneios, times, carteira, assinaturas, presets, uploads (ex: `https://common.omnyarena.com`) |
+| URL do serviço Admin | Painel staff: planos, presets, assinaturas, carteira, auditoria (ex: `https://admin.omnyarena.com`) |
+| URL do serviço Public | Catálogo público com HTTP Basic (ex: `https://public.omnyarena.com`) |
 | Email do Admin | Email do usuário ADMIN na API |
 | Senha do Admin | Senha do usuário ADMIN na API |
 | Sincronização Automática | Habilitar polling periódico |
