@@ -2,6 +2,8 @@
 <?php
 $t = $tournament ?? [];
 $isEdit = !empty($is_edit);
+$formatFieldsLocked = $isEdit && arenagamer_tournament_format_fields_locked($t);
+$formatLockedHelp = arenagamer_tournament_format_locked_message();
 $labelClass = (string) ($label_class ?? 'control-label');
 $helpClass = (string) ($help_class ?? 'help-block');
 $defaultLimit = (int) ($default_participants_limit ?? $t['participantsLimit'] ?? 20);
@@ -10,35 +12,64 @@ $extraPrice = (float) ($extra_participant_price ?? 0);
 $planParticipantBenefitsActive = !empty($plan_participant_benefits_active);
 $useSelectpicker = !empty($use_selectpicker);
 $selectClass = 'form-control' . ($useSelectpicker ? ' selectpicker' : '');
+$currentType = (string) ($t['type'] ?? 'SINGLE_ELIMINATION');
+$currentFormat = (string) ($t['format'] ?? 'SOLO');
 ?>
 <div class="panel_s mtop10 mbot15">
     <div class="panel-heading">
         <h4 class="panel-title"><i class="fa fa-cog"></i> Configurações do torneio</h4>
     </div>
     <div class="panel-body">
+        <?php if ($formatFieldsLocked): ?>
+        <p class="alert alert-warning mtop0 mbot15">
+            <i class="fa fa-lock"></i> <?php echo htmlspecialchars($formatLockedHelp); ?>
+        </p>
+        <?php endif; ?>
         <div class="row">
             <div class="col-md-4">
                 <div class="form-group">
                     <label for="type" class="<?php echo htmlspecialchars($labelClass); ?>">Modo de torneio</label>
-                    <select name="type" id="type" class="<?php echo $selectClass; ?>">
+                    <?php if ($formatFieldsLocked): ?>
+                    <select id="type" class="<?php echo $selectClass; ?>" disabled>
                         <?php foreach (arenagamer_tournament_type_options() as $type): ?>
-                        <option value="<?php echo $type; ?>" <?php echo ($t['type'] ?? 'SINGLE_ELIMINATION') === $type ? 'selected' : ''; ?>>
+                        <option value="<?php echo $type; ?>" <?php echo $currentType === $type ? 'selected' : ''; ?>>
                             <?php echo htmlspecialchars(arenagamer_tournament_type_label($type)); ?>
                         </option>
                         <?php endforeach; ?>
                     </select>
+                    <input type="hidden" name="type" value="<?php echo htmlspecialchars($currentType); ?>">
+                    <?php else: ?>
+                    <select name="type" id="type" class="<?php echo $selectClass; ?>">
+                        <?php foreach (arenagamer_tournament_type_options() as $type): ?>
+                        <option value="<?php echo $type; ?>" <?php echo $currentType === $type ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars(arenagamer_tournament_type_label($type)); ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="col-md-4">
                 <div class="form-group">
                     <label for="format" class="<?php echo htmlspecialchars($labelClass); ?>">Formato</label>
-                    <select name="format" id="format" class="<?php echo $selectClass; ?>">
+                    <?php if ($formatFieldsLocked): ?>
+                    <select id="format" class="<?php echo $selectClass; ?>" disabled>
                         <?php foreach (arenagamer_tournament_format_options() as $format): ?>
-                        <option value="<?php echo $format; ?>" <?php echo ($t['format'] ?? 'SOLO') === $format ? 'selected' : ''; ?>>
+                        <option value="<?php echo $format; ?>" <?php echo $currentFormat === $format ? 'selected' : ''; ?>>
                             <?php echo htmlspecialchars(arenagamer_tournament_format_label($format)); ?>
                         </option>
                         <?php endforeach; ?>
                     </select>
+                    <input type="hidden" name="format" value="<?php echo htmlspecialchars($currentFormat); ?>">
+                    <?php else: ?>
+                    <select name="format" id="format" class="<?php echo $selectClass; ?>">
+                        <?php foreach (arenagamer_tournament_format_options() as $format): ?>
+                        <option value="<?php echo $format; ?>" <?php echo $currentFormat === $format ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars(arenagamer_tournament_format_label($format)); ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="col-md-4">
@@ -84,9 +115,9 @@ $selectClass = 'form-control' . ($useSelectpicker ? ' selectpicker' : '');
             </div>
             <div class="col-md-4">
                 <div class="form-group">
-                    <label for="min_participants" class="<?php echo htmlspecialchars($labelClass); ?>">Mín. participantes</label>
-                    <input type="number" min="2" name="min_participants" id="min_participants" class="form-control"
-                           value="<?php echo (int) ($t['minParticipants'] ?? 2); ?>">
+                    <label for="min_participants" class="<?php echo htmlspecialchars($labelClass); ?>" id="min_participants_label">Mín. participantes</label>
+                    <input type="number" min="<?php echo arenagamer_tournament_min_participants(); ?>" name="min_participants" id="min_participants" class="form-control"
+                           value="<?php echo max(arenagamer_tournament_min_participants(), (int) ($t['minParticipants'] ?? arenagamer_tournament_min_participants())); ?>">
                 </div>
             </div>
             <?php if (!empty($show_best_of)): ?>
@@ -101,13 +132,15 @@ $selectClass = 'form-control' . ($useSelectpicker ? ' selectpicker' : '');
         </div>
 
         <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_group_stage_fields', [
-            'tournament'  => $t,
-            'label_class' => $labelClass,
-            'help_class'  => $helpClass,
+            'tournament'           => $t,
+            'label_class'          => $labelClass,
+            'help_class'           => $helpClass,
+            'format_fields_locked' => $formatFieldsLocked,
         ]); ?>
 
         <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_format_fields', [
-            'tournament' => $t,
+            'tournament'           => $t,
+            'format_fields_locked' => $formatFieldsLocked,
         ]); ?>
     </div>
 </div>

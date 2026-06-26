@@ -169,7 +169,7 @@ class Arenagamer extends AdminController
         }
 
         if ($this->input->post()) {
-            $updateOptions = ['is_update' => true, 'api' => $this->arenagamer_api];
+            $updateOptions = ['is_update' => true, 'api' => $this->arenagamer_api, 'existing_tournament' => $data['tournament']];
             $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
@@ -215,6 +215,7 @@ class Arenagamer extends AdminController
         $data['title'] = 'ArenaGamer - Torneio';
         $data['tournament'] = $this->arenagamer_api->get_tournament($slug);
         $data['matches'] = $this->arenagamer_api->get_tournament_matches($slug);
+        $data['standings'] = $this->arenagamer_api->get_tournament_standings($slug);
         $data['can_manage'] = $this->arenagamer_api->can_manage_tournament($slug);
 
         $tournamentData = arenagamer_api_data($data['tournament']);
@@ -327,6 +328,15 @@ class Arenagamer extends AdminController
             case 'schedule':
                 $result = $this->arenagamer_api->schedule_matches($slug);
                 break;
+            case 'advance_round':
+                $result = $this->arenagamer_api->advance_round($slug);
+                break;
+            case 'generate_knockout':
+                $result = $this->arenagamer_api->generate_knockout($slug);
+                break;
+            case 'finalize':
+                $result = $this->arenagamer_api->finalize_tournament($slug);
+                break;
             case 'cancel':
                 $result = $this->arenagamer_api->cancel_tournament($slug);
                 break;
@@ -409,6 +419,60 @@ class Arenagamer extends AdminController
         } else {
             set_alert('danger', 'Erro: ' . $this->arenagamer_api->get_last_error());
             $this->arenagamer_model->log_sync('tournament', (int) $matchId, 'reschedule_match', 'error', $this->arenagamer_api->get_last_error());
+        }
+
+        redirect(admin_url("arenagamer/tournament_detail/{$slug}"));
+    }
+
+    public function record_match_result($matchId)
+    {
+        if (!staff_can('edit', 'arenagamer')) {
+            access_denied('arenagamer');
+        }
+
+        $slug = $this->input->post('slug');
+        $winnerParticipantId = (int) $this->input->post('winner_participant_id');
+        $homeScore = $this->input->post('home_score');
+        $awayScore = $this->input->post('away_score');
+
+        if (!$matchId || !$slug) {
+            set_alert('danger', 'Dados inválidos para registrar o resultado');
+            redirect($slug ? admin_url("arenagamer/tournament_detail/{$slug}") : admin_url('arenagamer/tournaments'));
+        }
+
+        if ($homeScore === '' || $homeScore === null || $awayScore === '' || $awayScore === null) {
+            set_alert('danger', 'Informe o placar da partida');
+            redirect(admin_url("arenagamer/tournament_detail/{$slug}"));
+        }
+
+        if (!$this->arenagamer_api->can_manage_tournament($slug)) {
+            set_alert('danger', 'Sem permissão para gerenciar este torneio');
+            redirect(admin_url('arenagamer/tournament_detail/' . $slug));
+        }
+
+        $proofUrl = '';
+        $proofUpload = arenagamer_handle_match_proof_upload('proof_file');
+        if (is_array($proofUpload) && isset($proofUpload['error'])) {
+            set_alert('danger', 'Erro no upload do comprovante: ' . $proofUpload['error']);
+            redirect(admin_url("arenagamer/tournament_detail/{$slug}"));
+        }
+        if (is_string($proofUpload)) {
+            $proofUrl = $proofUpload;
+        }
+
+        $result = $this->arenagamer_api->record_match_result($matchId, [
+            'winnerParticipantId' => $winnerParticipantId,
+            'homeScore'           => $homeScore,
+            'awayScore'           => $awayScore,
+            'proofUrl'            => $proofUrl,
+        ]);
+
+        if (arenagamer_api_is_success($result)) {
+            set_alert('success', arenagamer_api_message($result, 'Resultado registrado com sucesso'));
+            $this->arenagamer_model->log_sync('tournament', (int) $matchId, 'record_match_result', 'success', "Slug: {$slug}");
+        } else {
+            set_alert('danger', 'Erro: ' . $this->arenagamer_api->get_last_error());
+            $this->arenagamer_model->log_sync('tournament', (int) $matchId, 'record_match_result', 'error', $this->arenagamer_api->get_last_error());
         }
 
         redirect(admin_url("arenagamer/tournament_detail/{$slug}"));
@@ -946,6 +1010,10 @@ class Arenagamer extends AdminController
             $password = $this->input->post('admin_password');
             if (!empty($password)) {
                 $settings['arenagamer_admin_password'] = $password;
+            }
+
+            if ($this->input->post('regenerate_internal_secret')) {
+                $settings['arenagamer_internal_secret'] = arenagamer_generate_internal_secret();
             }
 
             $pricingPayload = [

@@ -45,6 +45,23 @@
                                    placeholder="Deixe em branco para manter a senha atual">
                         </div>
 
+                        <div class="form-group">
+                            <label for="internal_secret">Segredo interno (callback da API)</label>
+                            <input type="text" name="internal_secret_display" id="internal_secret" class="form-control"
+                                   value="<?php echo htmlspecialchars((string) get_option('arenagamer_internal_secret')); ?>"
+                                   readonly>
+                            <small class="text-muted">
+                                Use este valor na configuração da API Java
+                                (<code>arenagamer.perfex.internal-secret</code> ou variável
+                                <code>PERFEX_INTERNAL_SECRET</code>). A API usa este segredo para criar a
+                                fatura de compra de créditos no Perfex.
+                            </small>
+                            <div class="checkbox checkbox-primary mtop10">
+                                <input type="checkbox" name="regenerate_internal_secret" id="regenerate_internal_secret" value="1">
+                                <label for="regenerate_internal_secret">Gerar um novo segredo ao salvar (atualize também a API Java)</label>
+                            </div>
+                        </div>
+
                         <hr />
 
                         <h4 class="tw-font-semibold mtop15 mbot15">Preços de criação de torneio</h4>

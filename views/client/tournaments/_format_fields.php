@@ -1,6 +1,7 @@
 <?php defined('BASEPATH') or exit('No direct script access allowed'); ?>
 <?php
 $t = is_array($tournament ?? null) ? $tournament : [];
+$formatFieldsLocked = !empty($format_fields_locked);
 $isTeamFormat = ($t['format'] ?? 'SOLO') === 'TEAM';
 $minPlayers = (int) ($t['minPlayersPerTeam'] ?? 5);
 $maxPlayers = (int) ($t['maxPlayersPerTeam'] ?? 5);
@@ -24,7 +25,8 @@ if ($maxPlayers < 1) {
                    id="min_players_per_team"
                    class="form-control"
                    value="<?php echo $minPlayers; ?>"
-                   <?php echo $isTeamFormat ? 'required' : ''; ?>>
+                   <?php echo ($isTeamFormat && !$formatFieldsLocked) ? 'required' : ''; ?>
+                   <?php echo $formatFieldsLocked ? 'readonly' : ''; ?>>
             <p class="help-block text-muted">
                 Mínimo de jogadores (clientes) por equipe para se inscrever.
             </p>
@@ -42,7 +44,8 @@ if ($maxPlayers < 1) {
                    id="max_players_per_team"
                    class="form-control"
                    value="<?php echo $maxPlayers; ?>"
-                   <?php echo $isTeamFormat ? 'required' : ''; ?>>
+                   <?php echo ($isTeamFormat && !$formatFieldsLocked) ? 'required' : ''; ?>
+                   <?php echo $formatFieldsLocked ? 'readonly' : ''; ?>>
             <p class="help-block text-muted">
                 Máximo de jogadores (clientes) por equipe inscrita neste torneio.
             </p>
@@ -57,6 +60,9 @@ if ($maxPlayers < 1) {
     var maxPlayersEl = document.getElementById('max_players_per_team');
     var participantsLabel = document.getElementById('participants_limit_label');
     var participantsHelp = document.getElementById('participants_limit_help');
+    var minParticipantsLabel = document.getElementById('min_participants_label');
+    var groupsCountHelp = document.getElementById('groups_count_help');
+    var formatFieldsLocked = <?php echo $formatFieldsLocked ? 'true' : 'false'; ?>;
 
     if (!formatEl || !teamFields) {
         return;
@@ -66,10 +72,14 @@ if ($maxPlayers < 1) {
         return formatEl.value === 'TEAM';
     }
 
-    function updateParticipantsCopy() {
+    function updateFormatNomenclature() {
         var team = isTeamFormat();
+
         if (participantsLabel) {
             participantsLabel.textContent = team ? 'Limite de equipes' : 'Limite de participantes';
+        }
+        if (minParticipantsLabel) {
+            minParticipantsLabel.textContent = team ? 'Mín. de equipes' : 'Mín. de participantes';
         }
         if (participantsHelp && participantsHelp.dataset) {
             var soloHelp = participantsHelp.dataset.soloHelp || '';
@@ -80,28 +90,45 @@ if ($maxPlayers < 1) {
                 participantsHelp.textContent = soloHelp;
             }
         }
+        if (groupsCountHelp && groupsCountHelp.dataset) {
+            var groupsSoloHelp = groupsCountHelp.dataset.soloHelp || '';
+            var groupsTeamHelp = groupsCountHelp.dataset.teamHelp || '';
+            groupsCountHelp.textContent = team && groupsTeamHelp ? groupsTeamHelp : groupsSoloHelp;
+        }
+
+        document.dispatchEvent(new CustomEvent('arenagamer:format-changed', {
+            detail: { isTeam: team }
+        }));
     }
 
     function syncFormatFields() {
         var team = isTeamFormat();
         teamFields.style.display = team ? '' : 'none';
-        [minPlayersEl, maxPlayersEl].forEach(function (el) {
-            if (!el) {
-                return;
-            }
-            if (team) {
-                el.setAttribute('required', 'required');
-            } else {
-                el.removeAttribute('required');
-            }
-        });
-        updateParticipantsCopy();
+        if (!formatFieldsLocked) {
+            [minPlayersEl, maxPlayersEl].forEach(function (el) {
+                if (!el) {
+                    return;
+                }
+                if (team) {
+                    el.setAttribute('required', 'required');
+                } else {
+                    el.removeAttribute('required');
+                }
+            });
+        }
+        updateFormatNomenclature();
         if (typeof jQuery !== 'undefined' && jQuery(formatEl).hasClass('selectpicker')) {
             jQuery(formatEl).selectpicker('refresh');
         }
     }
 
-    formatEl.addEventListener('change', syncFormatFields);
+    if (!formatFieldsLocked) {
+        formatEl.addEventListener('change', syncFormatFields);
+        if (typeof jQuery !== 'undefined' && jQuery(formatEl).hasClass('selectpicker')) {
+            jQuery(formatEl).on('changed.bs.select', syncFormatFields);
+        }
+    }
+
     syncFormatFields();
 })();
 </script>

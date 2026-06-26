@@ -849,6 +849,16 @@ class ArenaGamer_api
         return $this->request('GET', '/common/tournaments/' . rawurlencode($slug) . '/matches');
     }
 
+    public function get_tournament_standings($slug)
+    {
+        return $this->request('GET', '/common/tournaments/' . rawurlencode($slug) . '/standings');
+    }
+
+    public function finalize_tournament($slug)
+    {
+        return $this->request('POST', '/common/tournaments/' . rawurlencode($slug) . '/finalize');
+    }
+
     public function create_tournament(array $data)
     {
         $payload = $this->normalize_tournament_payload($data);
@@ -916,6 +926,16 @@ class ArenaGamer_api
         return $this->request('POST', '/common/tournaments/' . rawurlencode($slug) . '/schedule');
     }
 
+    public function advance_round($slug)
+    {
+        return $this->request('POST', '/common/tournaments/' . rawurlencode($slug) . '/advance-round');
+    }
+
+    public function generate_knockout($slug)
+    {
+        return $this->request('POST', '/common/tournaments/' . rawurlencode($slug) . '/generate-knockout');
+    }
+
     public function cancel_tournament($slug)
     {
         return $this->request('DELETE', '/common/tournaments/' . rawurlencode($slug));
@@ -940,6 +960,33 @@ class ArenaGamer_api
         );
     }
 
+    public function record_match_result($matchId, array $data)
+    {
+        $query = [];
+
+        if (!empty($data['winnerParticipantId'])) {
+            $query['winnerParticipantId'] = (int) $data['winnerParticipantId'];
+        }
+
+        if (isset($data['homeScore']) && $data['homeScore'] !== '') {
+            $query['homeScore'] = (int) $data['homeScore'];
+        }
+        if (isset($data['awayScore']) && $data['awayScore'] !== '') {
+            $query['awayScore'] = (int) $data['awayScore'];
+        }
+        if (isset($data['proofUrl']) && $data['proofUrl'] !== '') {
+            $query['proofUrl'] = (string) $data['proofUrl'];
+        }
+
+        return $this->request(
+            'POST',
+            '/common/tournaments/matches/' . (int) $matchId . '/result',
+            null,
+            true,
+            $query
+        );
+    }
+
     private function normalize_tournament_payload(array $data, $isUpdate = false)
     {
         $payload = [
@@ -948,7 +995,7 @@ class ArenaGamer_api
             'type'                 => (string) ($data['type'] ?? 'SINGLE_ELIMINATION'),
             'format'               => (string) ($data['format'] ?? 'SOLO'),
             'visibility'           => (string) ($data['visibility'] ?? 'PUBLIC'),
-            'minParticipants'      => max(2, (int) ($data['minParticipants'] ?? 2)),
+            'minParticipants'      => max(arenagamer_tournament_min_participants(), (int) ($data['minParticipants'] ?? arenagamer_tournament_min_participants())),
             'entryFeeCredits'      => (float) ($data['entryFeeCredits'] ?? 0),
             'feePercentage'      => (float) ($data['feePercentage'] ?? 0),
             'prizeType'            => (string) ($data['prizeType'] ?? 'AUTOMATIC'),
@@ -1167,11 +1214,14 @@ class ArenaGamer_api
         return $this->request('GET', '/common/wallet/transactions', null, true, $this->pageable($page, $size));
     }
 
-    public function wallet_deposit(array $data)
+    /**
+     * Compra de créditos: gera uma fatura no Perfex (não credita direto).
+     * O saldo é creditado após o pagamento da fatura.
+     */
+    public function purchase_credits(array $data)
     {
-        return $this->request('POST', '/common/wallet/deposit', [
-            'amount'      => (float) ($data['amount'] ?? 0),
-            'description' => trim((string) ($data['description'] ?? '')),
+        return $this->request('POST', '/common/wallet/credits/purchase', [
+            'amount' => (float) ($data['amount'] ?? 0),
         ]);
     }
 

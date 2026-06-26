@@ -262,6 +262,102 @@ function arenagamer_tournament_not_editable_message()
     return 'Torneios cancelados não podem ser editados.';
 }
 
+/**
+ * Quantidade de inscritos aprovados no torneio (a partir dos dados da API).
+ */
+function arenagamer_tournament_participant_count($tournament)
+{
+    if (!is_array($tournament)) {
+        return 0;
+    }
+
+    return max(0, (int) ($tournament['participantCount'] ?? 0));
+}
+
+/**
+ * Torneio já possui inscritos aprovados.
+ */
+function arenagamer_tournament_has_participants($tournament)
+{
+    return arenagamer_tournament_participant_count($tournament) > 0;
+}
+
+/**
+ * Formato/modo do torneio não pode ser alterado após inscrições.
+ */
+function arenagamer_tournament_format_fields_locked($tournament)
+{
+    return arenagamer_tournament_has_participants($tournament);
+}
+
+function arenagamer_tournament_format_locked_message()
+{
+    return 'Formato e modo do torneio não podem ser alterados após haver inscrições.';
+}
+
+/**
+ * Campos de formato/modo bloqueados na atualização quando já há inscritos.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_format_locked_fields(array $existing, array $payload)
+{
+    if (!arenagamer_tournament_format_fields_locked($existing)) {
+        return null;
+    }
+
+    $checks = [
+        'type'   => strtoupper(trim((string) ($existing['type'] ?? ''))),
+        'format' => strtoupper(trim((string) ($existing['format'] ?? ''))),
+    ];
+
+    foreach ($checks as $field => $current) {
+        if (!array_key_exists($field, $payload)) {
+            continue;
+        }
+        $next = strtoupper(trim((string) $payload[$field]));
+        if ($next !== '' && $next !== $current) {
+            return arenagamer_tournament_format_locked_message();
+        }
+    }
+
+    $intChecks = [
+        'minPlayersPerTeam' => $existing['minPlayersPerTeam'] ?? null,
+        'maxPlayersPerTeam' => $existing['maxPlayersPerTeam'] ?? null,
+        'groupsCount'       => $existing['groupsCount'] ?? null,
+        'advancePerGroup'   => $existing['advancePerGroup'] ?? null,
+    ];
+
+    foreach ($intChecks as $field => $current) {
+        if (!array_key_exists($field, $payload)) {
+            continue;
+        }
+        $next = $payload[$field];
+        if ($next === null || $next === '') {
+            continue;
+        }
+        if ((int) $next !== (int) $current) {
+            return arenagamer_tournament_format_locked_message();
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Remove campos de formato/modo do payload de atualização quando bloqueados.
+ */
+function arenagamer_strip_locked_tournament_format_fields(array &$payload, array $existing)
+{
+    if (!arenagamer_tournament_format_fields_locked($existing)) {
+        return;
+    }
+
+    foreach (['type', 'format', 'minPlayersPerTeam', 'maxPlayersPerTeam', 'groupsCount', 'advancePerGroup'] as $field) {
+        unset($payload[$field]);
+    }
+}
+
 function arenagamer_user_type_badge($userType)
 {
     $badges = [
@@ -294,6 +390,179 @@ function arenagamer_format_date($date, $format = 'd/m/Y H:i')
     }
 
     return date($format, strtotime($date));
+}
+
+/**
+ * Indica se é possível gerar a próxima fase da chave eliminatória:
+ * todos os jogos da fase atual concluídos e existe uma próxima fase ainda não preenchida.
+ */
+function arenagamer_matches_can_advance_round($matchesData, $tournamentType)
+{
+    if (!in_array($tournamentType, ['SINGLE_ELIMINATION', 'GROUP_STAGE'], true)
+        || !is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    // Na fase de grupos, só faz sentido avançar dentro do mata-mata (após ele existir)
+    if ($tournamentType === 'GROUP_STAGE' && !arenagamer_matches_has_knockout($matchesData)) {
+        return false;
+    }
+
+    $knockoutTypes = ['FINAL', 'SEMIFINAL', 'QUARTERFINAL', 'KNOCKOUT', 'THIRD_PLACE'];
+
+    $rounds = [];
+    foreach ($matchesData as $m) {
+        $rn = $m['roundNumber'] ?? null;
+        if ($rn === null) {
+            continue;
+        }
+        // No mata-mata da fase de grupos, ignora as rodadas de grupo
+        if ($tournamentType === 'GROUP_STAGE' && !in_array($m['roundType'] ?? '', $knockoutTypes, true)) {
+            continue;
+        }
+        $rounds[(int) $rn][] = $m;
+    }
+
+    if (empty($rounds)) {
+        return false;
+    }
+
+    ksort($rounds);
+    $finished = ['COMPLETED', 'WALKOVER'];
+
+    foreach (array_keys($rounds) as $rn) {
+        $populated = false;
+        $allFinished = true;
+
+        foreach ($rounds[$rn] as $m) {
+            if (!empty($m['homeParticipantId']) || !empty($m['awayParticipantId'])) {
+                $populated = true;
+            }
+            if (!in_array($m['status'] ?? '', $finished, true)) {
+                $allFinished = false;
+            }
+        }
+
+        if (!$populated) {
+            continue;
+        }
+        if (!$allFinished) {
+            return false;
+        }
+
+        $nextRn = $rn + 1;
+        if (!isset($rounds[$nextRn])) {
+            return false;
+        }
+
+        foreach ($rounds[$nextRn] as $nm) {
+            if (!empty($nm['homeParticipantId']) || !empty($nm['awayParticipantId'])) {
+                continue 2;
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Indica se já existe um mata-mata (eliminatória) gerado entre as partidas.
+ */
+function arenagamer_matches_has_knockout($matchesData)
+{
+    if (!is_array($matchesData)) {
+        return false;
+    }
+
+    $knockoutTypes = ['FINAL', 'SEMIFINAL', 'QUARTERFINAL', 'KNOCKOUT', 'THIRD_PLACE'];
+
+    foreach ($matchesData as $m) {
+        if (in_array($m['roundType'] ?? '', $knockoutTypes, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Indica se o mata-mata da fase de grupos pode ser gerado:
+ * tipo fase de grupos, todos os jogos de grupo concluídos e mata-mata ainda não gerado.
+ */
+function arenagamer_matches_can_generate_knockout($matchesData, $tournamentType)
+{
+    if ($tournamentType !== 'GROUP_STAGE' || !is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    if (arenagamer_matches_has_knockout($matchesData)) {
+        return false;
+    }
+
+    $finished = ['COMPLETED', 'WALKOVER'];
+    $hasGroupMatch = false;
+
+    foreach ($matchesData as $m) {
+        if (($m['roundType'] ?? '') !== 'GROUP_STAGE') {
+            continue;
+        }
+        $hasGroupMatch = true;
+        if (!in_array($m['status'] ?? '', $finished, true)) {
+            return false;
+        }
+    }
+
+    return $hasGroupMatch;
+}
+
+/**
+ * Indica se o torneio pode ser finalizado: todas as posições definidas,
+ * ou seja, todas as partidas concluídas. Em mata-mata/fase de grupos exige uma final concluída.
+ */
+function arenagamer_matches_can_finalize($matchesData, $tournamentType = '')
+{
+    if (!is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    $finished = ['COMPLETED', 'WALKOVER'];
+    $hasFinishedFinal = false;
+
+    foreach ($matchesData as $m) {
+        if (!in_array($m['status'] ?? '', $finished, true)) {
+            return false;
+        }
+        if (($m['roundType'] ?? '') === 'FINAL' && in_array($m['status'] ?? '', $finished, true)) {
+            $hasFinishedFinal = true;
+        }
+    }
+
+    if (in_array($tournamentType, ['SINGLE_ELIMINATION', 'GROUP_STAGE'], true)) {
+        return $hasFinishedFinal;
+    }
+
+    return true;
+}
+
+/**
+ * Rótulo amigável para a faixa de horário (timeWindow) de uma partida
+ */
+function arenagamer_time_window_label($window)
+{
+    $map = [
+        'MORNING'   => 'Manhã',
+        'AFTERNOON' => 'Tarde',
+        'EVENING'   => 'Noite',
+        'NIGHT'     => 'Madrugada',
+    ];
+
+    if (empty($window)) {
+        return '';
+    }
+
+    return $map[$window] ?? $window;
 }
 
 /**
@@ -1475,6 +1744,14 @@ function arenagamer_plan_allows_entry_fee($plan)
 }
 
 /**
+ * Mínimo de participantes ou equipes exigido para iniciar o torneio.
+ */
+function arenagamer_tournament_min_participants()
+{
+    return 4;
+}
+
+/**
  * Custo mínimo de criação (em créditos) para liberar taxa de inscrição sem benefício do plano.
  */
 function arenagamer_entry_fee_min_creation_cost()
@@ -2068,7 +2345,7 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         'type'                 => (string) $input->post('type'),
         'format'               => (string) $input->post('format'),
         'visibility'           => (string) $input->post('visibility'),
-        'minParticipants'      => max(2, (int) ($input->post('min_participants') ?: 2)),
+        'minParticipants'      => max(arenagamer_tournament_min_participants(), (int) ($input->post('min_participants') ?: arenagamer_tournament_min_participants())),
         'presetId'             => $resolvedPresetId,
         'entryFeeCredits'      => (float) str_replace(',', '.', (string) $input->post('entry_fee_credits')),
         'feePercentage'        => (float) str_replace(',', '.', (string) $input->post('fee_percentage')),
@@ -2076,8 +2353,6 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         'prizeFunding'         => strtoupper(trim((string) ($input->post('prize_funding') ?: 'FIXED'))),
         'prizePool'            => (float) str_replace(',', '.', (string) $input->post('prize_pool')),
         'groupsCount'          => arenagamer_post_optional_int($input, 'groups_count'),
-        'teamsPerGroup'        => arenagamer_post_optional_int($input, 'teams_per_group'),
-        'advancePerGroup'      => arenagamer_post_optional_int($input, 'advance_per_group'),
         'bestOf'               => arenagamer_post_optional_int($input, 'best_of'),
         'rules'                => trim((string) $input->post('rules')),
         'tiebreakerRules'      => trim((string) $input->post('tiebreaker_rules')),
@@ -2109,9 +2384,11 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         }
     }
 
-    if (($payload['type'] ?? '') !== 'GROUP_STAGE') {
+    $payload['teamsPerGroup'] = null;
+    if (($payload['type'] ?? '') === 'GROUP_STAGE') {
+        $payload['advancePerGroup'] = arenagamer_post_optional_int($input, 'advance_per_group');
+    } else {
         $payload['groupsCount'] = null;
-        $payload['teamsPerGroup'] = null;
         $payload['advancePerGroup'] = null;
     }
 
@@ -2146,6 +2423,15 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         if ($clientUserId !== null && $clientUserId !== '') {
             $payload['clientUserId'] = (int) $clientUserId;
         }
+    }
+
+    $existingTournament = is_array($options['existing_tournament'] ?? null) ? $options['existing_tournament'] : null;
+    if ($isUpdate && $existingTournament !== null) {
+        $formatLockError = arenagamer_validate_tournament_format_locked_fields($existingTournament, $payload);
+        if ($formatLockError !== null) {
+            $payload['_format_lock_error'] = $formatLockError;
+        }
+        arenagamer_strip_locked_tournament_format_fields($payload, $existingTournament);
     }
 
     return $payload;
@@ -2481,6 +2767,10 @@ function arenagamer_tournament_payload_error(array $payload)
         return (string) $payload['_prize_error'];
     }
 
+    if (!empty($payload['_format_lock_error'])) {
+        return (string) $payload['_format_lock_error'];
+    }
+
     return null;
 }
 
@@ -2570,6 +2860,110 @@ function arenagamer_apply_tournament_image_uploads(array &$payload, $input = nul
     }
 
     return null;
+}
+
+/**
+ * Script JS dos modais de resultado: vencedor automático pelo placar + botão "Trapacear".
+ */
+function arenagamer_result_modal_script()
+{
+    return <<<'HTML'
+<script>
+(function () {
+    function updateAutoWinner(modal) {
+        var homeInput = modal.querySelector('input[name="home_score"]');
+        var awayInput = modal.querySelector('input[name="away_score"]');
+        var display = modal.querySelector('.ag-auto-winner');
+        if (!homeInput || !awayInput || !display) { return; }
+        var home = parseInt(homeInput.value, 10);
+        var away = parseInt(awayInput.value, 10);
+        var homeName = modal.getAttribute('data-home-name') || 'Casa';
+        var awayName = modal.getAttribute('data-away-name') || 'Visitante';
+        if (isNaN(home) || isNaN(away)) {
+            display.textContent = 'defina o placar';
+        } else if (home > away) {
+            display.textContent = homeName;
+        } else if (away > home) {
+            display.textContent = awayName;
+        } else {
+            display.textContent = 'Empate — use Trapacear para escolher';
+        }
+    }
+
+    document.addEventListener('input', function (e) {
+        if (!e.target.classList || !e.target.classList.contains('ag-score')) { return; }
+        var modal = e.target.closest('.ag-result-modal');
+        if (modal) { updateAutoWinner(modal); }
+    });
+
+    document.addEventListener('click', function (e) {
+        var toggle = e.target.closest ? e.target.closest('.ag-cheat-toggle') : null;
+        if (!toggle) { return; }
+        var modal = toggle.closest('.ag-result-modal');
+        if (!modal) { return; }
+        var block = modal.querySelector('.ag-cheat-block');
+        if (!block) { return; }
+        if (block.style.display === 'none' || block.style.display === '') {
+            block.style.display = 'block';
+        } else {
+            block.style.display = 'none';
+            modal.querySelectorAll('.ag-cheat-block input[type="radio"]').forEach(function (r) { r.checked = false; });
+        }
+    });
+})();
+</script>
+HTML;
+}
+
+/**
+ * Diretório de upload dos comprovantes de resultado das partidas.
+ *
+ * @return array{abs:string,rel:string,url:string}
+ */
+function arenagamer_match_proof_upload_dir()
+{
+    $rel = 'modules/arenagamer/uploads/match_proofs/';
+    $abs = FCPATH . $rel;
+
+    if (!is_dir($abs)) {
+        @mkdir($abs, 0755, true);
+    }
+
+    return [
+        'abs' => $abs,
+        'rel' => $rel,
+        'url' => rtrim(site_url($rel), '/') . '/',
+    ];
+}
+
+/**
+ * Faz upload da imagem de comprovante do resultado (campo multipart).
+ *
+ * @return string|array{error:string}|null URL pública, erro ou null quando não há arquivo
+ */
+function arenagamer_handle_match_proof_upload($fieldName = 'proof_file')
+{
+    if (empty($_FILES[$fieldName]['name'])) {
+        return null;
+    }
+
+    $CI = &get_instance();
+    $CI->load->library('upload');
+    $dir = arenagamer_match_proof_upload_dir();
+    $CI->upload->initialize([
+        'upload_path'   => $dir['abs'],
+        'allowed_types' => 'gif|jpg|jpeg|png|webp',
+        'max_size'      => 4096,
+        'encrypt_name'  => true,
+    ]);
+
+    if (!$CI->upload->do_upload($fieldName)) {
+        return ['error' => strip_tags($CI->upload->display_errors('', ''))];
+    }
+
+    $data = $CI->upload->data();
+
+    return $dir['url'] . $data['file_name'];
 }
 
 /**

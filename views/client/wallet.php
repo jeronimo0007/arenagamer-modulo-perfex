@@ -24,13 +24,15 @@ $isPrimary = !empty($is_primary);
         <?php if ($canUseWallet): ?>
         <div class="row mbot20">
             <div class="col-md-6">
-                <?php echo form_open(arenagamer_client_url('wallet')); ?>
-                <input type="hidden" name="wallet_action" value="deposit">
-                <h5>Depositar</h5>
-                <div class="form-group"><input type="number" step="0.01" min="0.01" name="amount" class="form-control" placeholder="Valor" required></div>
-                <div class="form-group"><input type="text" name="description" class="form-control" placeholder="Descrição"></div>
-                <button type="submit" class="btn btn-success btn-sm">Depositar</button>
-                <?php echo form_close(); ?>
+                <h5>Adicionar créditos</h5>
+                <p class="text-muted">A compra de créditos gera uma fatura no Perfex. O saldo é creditado automaticamente após o pagamento.</p>
+                <?php if (function_exists('arenagamer_contact_can_buy_credits') && arenagamer_contact_can_buy_credits($auth_user ?? null)): ?>
+                <button type="button" class="btn btn-success btn-sm" data-toggle="modal" data-target="#arenagamerBuyCreditsModal">
+                    <i class="fa fa-shopping-cart"></i> Comprar créditos
+                </button>
+                <?php else: ?>
+                <p class="text-muted"><em>Você não tem permissão para comprar créditos.</em></p>
+                <?php endif; ?>
             </div>
             <div class="col-md-6">
                 <?php echo form_open(arenagamer_client_url('wallet')); ?>

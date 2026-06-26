@@ -123,6 +123,7 @@
                                         <th>Placar</th>
                                         <th>Agendamento</th>
                                         <th>Status</th>
+                                        <th>Vencedor</th>
                                         <?php if ($canManage): ?>
                                         <th>Ações</th>
                                         <?php endif; ?>
@@ -130,23 +131,42 @@
                                 </thead>
                                 <tbody>
                                     <?php foreach ($matches['data'] as $m): ?>
+                                    <?php
+                                        $homeId = $m['homeParticipantId'] ?? null;
+                                        $awayId = $m['awayParticipantId'] ?? null;
+                                        $winnerId = $m['winnerParticipantId'] ?? null;
+                                        $homeName = !empty($m['homeParticipantName']) ? $m['homeParticipantName'] : (!empty($homeId) ? 'Participante #' . (int) $homeId : 'BYE');
+                                        $awayName = !empty($m['awayParticipantName']) ? $m['awayParticipantName'] : (!empty($awayId) ? 'Participante #' . (int) $awayId : 'BYE');
+                                        $matchStatus = $m['status'] ?? '';
+                                        $bothDefined = !empty($homeId) && !empty($awayId);
+                                        $isFinished = in_array($matchStatus, ['COMPLETED', 'WALKOVER', 'CANCELLED'], true);
+                                        $winnerName = '';
+                                        if (!empty($winnerId)) {
+                                            if ($winnerId == $homeId) {
+                                                $winnerName = $homeName;
+                                            } elseif ($winnerId == $awayId) {
+                                                $winnerName = $awayName;
+                                            }
+                                        }
+                                    ?>
                                     <tr>
-                                        <td><?php echo $m['matchNumber']; ?></td>
                                         <td>
-                                            <?php if (!empty($m['homeParticipantName'])): ?>
-                                                <?php echo htmlspecialchars($m['homeParticipantName']); ?>
-                                            <?php elseif (!empty($m['homeParticipantId'])): ?>
-                                                Participante #<?php echo (int) $m['homeParticipantId']; ?>
+                                            <?php echo $m['matchNumber']; ?>
+                                            <?php if (!empty($m['phaseLabel'])): ?>
+                                            <br><small class="text-muted"><?php echo htmlspecialchars($m['phaseLabel']); ?></small>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if (!empty($m['homeParticipantName']) || !empty($homeId)): ?>
+                                                <?php echo htmlspecialchars($homeName); ?>
                                             <?php else: ?>
                                                 <em>BYE</em>
                                             <?php endif; ?>
                                         </td>
                                         <td class="text-center"><strong>vs</strong></td>
                                         <td>
-                                            <?php if (!empty($m['awayParticipantName'])): ?>
-                                                <?php echo htmlspecialchars($m['awayParticipantName']); ?>
-                                            <?php elseif (!empty($m['awayParticipantId'])): ?>
-                                                Participante #<?php echo (int) $m['awayParticipantId']; ?>
+                                            <?php if (!empty($m['awayParticipantName']) || !empty($awayId)): ?>
+                                                <?php echo htmlspecialchars($awayName); ?>
                                             <?php else: ?>
                                                 <em>BYE</em>
                                             <?php endif; ?>
@@ -160,12 +180,27 @@
                                         </td>
                                         <td><?php echo isset($m['scheduledAt']) ? date('d/m/Y H:i', strtotime($m['scheduledAt'])) : '—'; ?></td>
                                         <td><?php echo arenagamer_status_badge($m['status']); ?></td>
-                                        <?php if ($canManage): ?>
                                         <td>
+                                            <?php if ($winnerName !== ''): ?>
+                                            <span class="label label-success"><i class="fa fa-trophy"></i> <?php echo htmlspecialchars($winnerName); ?></span>
+                                            <?php else: ?>
+                                            —
+                                            <?php endif; ?>
+                                            <?php if (!empty($m['resultProofUrl'])): ?>
+                                            <br><a href="<?php echo htmlspecialchars($m['resultProofUrl']); ?>" target="_blank" rel="noopener"><i class="fa fa-paperclip"></i> Comprovante</a>
+                                            <?php endif; ?>
+                                        </td>
+                                        <?php if ($canManage): ?>
+                                        <td class="tw-whitespace-nowrap">
                                             <button type="button" class="btn btn-default btn-xs" data-toggle="modal"
-                                                    data-target="#reschedule-modal-<?php echo (int) $m['id']; ?>">
+                                                    data-target="#reschedule-modal-<?php echo (int) $m['id']; ?>" title="Reagendar">
                                                 <i class="fa fa-calendar"></i>
                                             </button>
+                                            <?php if ($bothDefined && !$isFinished): ?>
+                                            <button type="button" class="btn btn-success btn-xs" data-toggle="modal" data-target="#result-modal-<?php echo (int) $m['id']; ?>">
+                                                <i class="fa fa-trophy"></i> Registrar resultado
+                                            </button>
+                                            <?php endif; ?>
                                         </td>
                                         <?php endif; ?>
                                     </tr>
@@ -200,13 +235,133 @@
                                     </div>
                                 </div>
                             </div>
+
+                            <?php
+                                $rHomeId = $m['homeParticipantId'] ?? null;
+                                $rAwayId = $m['awayParticipantId'] ?? null;
+                                $rStatus = $m['status'] ?? '';
+                                $rBothDefined = !empty($rHomeId) && !empty($rAwayId);
+                                $rFinished = in_array($rStatus, ['COMPLETED', 'WALKOVER', 'CANCELLED'], true);
+                            ?>
+                            <?php if ($rBothDefined && !$rFinished): ?>
+                            <?php
+                                $rHomeName = !empty($m['homeParticipantName']) ? $m['homeParticipantName'] : 'Mandante';
+                                $rAwayName = !empty($m['awayParticipantName']) ? $m['awayParticipantName'] : 'Visitante';
+                            ?>
+                            <div class="modal fade ag-result-modal" id="result-modal-<?php echo (int) $m['id']; ?>" tabindex="-1" role="dialog"
+                                 data-home-id="<?php echo (int) $rHomeId; ?>" data-away-id="<?php echo (int) $rAwayId; ?>"
+                                 data-home-name="<?php echo htmlspecialchars($rHomeName); ?>" data-away-name="<?php echo htmlspecialchars($rAwayName); ?>">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <?php echo form_open_multipart(admin_url('arenagamer/record_match_result/' . (int) $m['id'])); ?>
+                                        <input type="hidden" name="slug" value="<?php echo htmlspecialchars($t['slug']); ?>">
+                                        <div class="modal-header">
+                                            <button type="button" class="close" data-dismiss="modal">&times;</button>
+                                            <h4 class="modal-title">Resultado — Partida #<?php echo (int) $m['matchNumber']; ?></h4>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row">
+                                                <div class="col-xs-6 form-group">
+                                                    <label>Placar — <?php echo htmlspecialchars($rHomeName); ?> <span class="text-danger">*</span></label>
+                                                    <input type="number" min="0" name="home_score" class="form-control ag-score" required>
+                                                </div>
+                                                <div class="col-xs-6 form-group">
+                                                    <label>Placar — <?php echo htmlspecialchars($rAwayName); ?> <span class="text-danger">*</span></label>
+                                                    <input type="number" min="0" name="away_score" class="form-control ag-score" required>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="bold">Vencedor:</label> <span class="ag-auto-winner text-info">defina o placar</span>
+                                                <br><small class="text-muted">Definido automaticamente pelo maior placar.</small>
+                                            </div>
+                                            <div class="form-group">
+                                                <button type="button" class="btn btn-warning btn-xs ag-cheat-toggle">
+                                                    <i class="fa fa-user-secret"></i> Trapaceiro detectado
+                                                </button>
+                                            </div>
+                                            <div class="form-group ag-cheat-block" style="display:none;">
+                                                <label class="bold text-warning">Vencedor manual</label>
+                                                <div class="radio">
+                                                    <label><input type="radio" name="winner_participant_id" value="<?php echo (int) $rHomeId; ?>"> <?php echo htmlspecialchars($rHomeName); ?></label>
+                                                </div>
+                                                <div class="radio">
+                                                    <label><input type="radio" name="winner_participant_id" value="<?php echo (int) $rAwayId; ?>"> <?php echo htmlspecialchars($rAwayName); ?></label>
+                                                </div>
+                                                <small class="text-muted">Com vencedor manual, o placar pode não refletir o vencedor.</small>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Comprovante do vencedor (imagem) <small class="text-muted">— opcional</small></label>
+                                                <input type="file" name="proof_file" accept="image/*" class="form-control">
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-default" data-dismiss="modal">Cancelar</button>
+                                            <button type="submit" class="btn btn-success"><i class="fa fa-check"></i> Salvar resultado</button>
+                                        </div>
+                                        <?php echo form_close(); ?>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php endif; ?>
                             <?php endforeach; ?>
+                            <?php echo arenagamer_result_modal_script(); ?>
                         <?php endif; ?>
                         <?php else: ?>
                         <p class="text-muted">Nenhuma partida gerada ainda.</p>
                         <?php endif; ?>
                     </div>
                 </div>
+
+                <?php $standingsData = arenagamer_api_data($standings ?? null, []); ?>
+                <?php if (is_array($standingsData) && !empty($standingsData)): ?>
+                <?php $hasGroups = false; foreach ($standingsData as $s) { if (isset($s['points']) || isset($s['groupNumber'])) { $hasGroups = true; break; } } ?>
+                <div class="panel_s">
+                    <div class="panel-heading">
+                        <h4 class="panel-title">
+                            Classificação
+                            <a href="#arenagamer-standings" data-toggle="collapse" class="btn btn-default btn-xs mleft5">
+                                <i class="fa fa-trophy"></i> Verificar posições
+                            </a>
+                        </h4>
+                    </div>
+                    <div class="panel-body">
+                        <div id="arenagamer-standings" class="collapse in table-responsive">
+                            <table class="table table-bordered table-condensed">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <?php if ($hasGroups): ?><th>Grupo</th><?php endif; ?>
+                                        <th>Participante</th>
+                                        <?php if ($hasGroups): ?><th title="Pontos">P</th><th title="Vitórias">V</th><th title="Empates">E</th><th title="Derrotas">D</th><?php else: ?><th>Posição</th><?php endif; ?>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($standingsData as $s): ?>
+                                    <tr>
+                                        <td><?php echo isset($s['position']) ? (int) $s['position'] . 'º' : '—'; ?></td>
+                                        <?php if ($hasGroups): ?><td><?php echo isset($s['groupNumber']) ? 'Grupo ' . (int) $s['groupNumber'] : '—'; ?></td><?php endif; ?>
+                                        <td>
+                                            <?php echo htmlspecialchars($s['participantName'] ?? 'A definir'); ?>
+                                            <?php if (!empty($s['note'])): ?>
+                                            <br><small class="text-muted"><?php echo htmlspecialchars($s['note']); ?></small>
+                                            <?php endif; ?>
+                                        </td>
+                                        <?php if ($hasGroups): ?>
+                                        <td><?php echo (int) ($s['points'] ?? 0); ?></td>
+                                        <td><?php echo (int) ($s['wins'] ?? 0); ?></td>
+                                        <td><?php echo (int) ($s['draws'] ?? 0); ?></td>
+                                        <td><?php echo (int) ($s['losses'] ?? 0); ?></td>
+                                        <?php else: ?>
+                                        <td><?php echo !empty($s['note']) ? htmlspecialchars($s['note']) : '—'; ?></td>
+                                        <?php endif; ?>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
 
                 <?php if (!empty($t['participants']) && is_array($t['participants'])): ?>
                 <div class="panel_s">
@@ -360,6 +515,30 @@
                                class="btn btn-info btn-block mtop5"
                                onclick="return confirm('Agendar partidas automaticamente?')">
                                 <i class="fa fa-calendar"></i> Agendar Partidas
+                            </a>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_generate_knockout($matches['data'] ?? null, $t['type'] ?? '')): ?>
+                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/generate_knockout"); ?>"
+                               class="btn btn-primary btn-block mtop5"
+                               onclick="return confirm('Gerar o mata-mata com os classificados de cada grupo?')">
+                                <i class="fa fa-sitemap"></i> Gerar Mata-mata
+                            </a>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_advance_round($matches['data'] ?? null, $t['type'] ?? '')): ?>
+                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/advance_round"); ?>"
+                               class="btn btn-primary btn-block mtop5"
+                               onclick="return confirm('Gerar a próxima fase com os vencedores da fase atual?')">
+                                <i class="fa fa-sitemap"></i> Gerar Próxima Fase
+                            </a>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_finalize($matches['data'] ?? null, $t['type'] ?? '')): ?>
+                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/finalize"); ?>"
+                               class="btn btn-success btn-block mtop5"
+                               onclick="return confirm('Todas as posições estão definidas. Finalizar o torneio?')">
+                                <i class="fa fa-flag-checkered"></i> Finalizar Torneio
                             </a>
                             <?php endif; ?>
 

@@ -60,6 +60,25 @@ function arenagamer_ensure_module_options()
             add_option($key, $value);
         }
     }
+
+    // Segredo compartilhado para o callback interno (API Java -> Perfex).
+    // Gera automaticamente na primeira execução; deve ser replicado na config
+    // da API Java (arenagamer.perfex.internal-secret / PERFEX_INTERNAL_SECRET).
+    if (get_option('arenagamer_internal_secret') === false || get_option('arenagamer_internal_secret') === '') {
+        add_option('arenagamer_internal_secret', arenagamer_generate_internal_secret());
+    }
+}
+
+/**
+ * Gera um segredo aleatório seguro para o callback interno.
+ */
+function arenagamer_generate_internal_secret()
+{
+    try {
+        return bin2hex(random_bytes(32));
+    } catch (Throwable $e) {
+        return md5(uniqid((string) mt_rand(), true) . microtime(true));
+    }
 }
 
 function arenagamer_permissions()

@@ -289,7 +289,7 @@ class Client extends ClientsController
         }
 
         if ($this->input->post()) {
-            $updateOptions = ['is_update' => true, 'api' => $this->api];
+            $updateOptions = ['is_update' => true, 'api' => $this->api, 'existing_tournament' => $data['tournament']];
             $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
@@ -354,6 +354,7 @@ class Client extends ClientsController
         $data['title'] = 'Torneio';
         $data['tournament'] = $this->api->get_tournament($slug);
         $data['matches'] = $this->api->get_tournament_matches($slug);
+        $data['standings'] = $this->api->get_tournament_standings($slug);
         $data['can_manage'] = $this->api->can_manage_tournament($slug);
         $data['auth_user'] = $this->api->get_auth_user();
 
@@ -424,6 +425,15 @@ class Client extends ClientsController
             case 'schedule':
                 $result = $this->api->schedule_matches($slug);
                 break;
+            case 'advance_round':
+                $result = $this->api->advance_round($slug);
+                break;
+            case 'generate_knockout':
+                $result = $this->api->generate_knockout($slug);
+                break;
+            case 'finalize':
+                $result = $this->api->finalize_tournament($slug);
+                break;
             case 'cancel':
                 $result = $this->api->cancel_tournament($slug);
                 break;
@@ -442,6 +452,58 @@ class Client extends ClientsController
         if ($action === 'cancel') {
             redirect(arenagamer_client_url('tournaments'));
             return;
+        }
+
+        redirect(arenagamer_client_url('tournament_detail/' . $slug));
+    }
+
+    public function record_match_result($matchId)
+    {
+        $slug = $this->input->post('slug');
+        $winnerParticipantId = (int) $this->input->post('winner_participant_id');
+        $homeScore = $this->input->post('home_score');
+        $awayScore = $this->input->post('away_score');
+
+        if (!$matchId || !$slug) {
+            set_alert('danger', 'Dados inválidos para registrar o resultado');
+            redirect($slug ? arenagamer_client_url('tournament_detail/' . $slug) : arenagamer_client_url('tournaments'));
+            return;
+        }
+
+        if ($homeScore === '' || $homeScore === null || $awayScore === '' || $awayScore === null) {
+            set_alert('danger', 'Informe o placar da partida');
+            redirect(arenagamer_client_url('tournament_detail/' . $slug));
+            return;
+        }
+
+        if (!$this->api->can_manage_tournament($slug)) {
+            set_alert('danger', 'Sem permissão para gerenciar este torneio');
+            redirect(arenagamer_client_url('tournament_detail/' . $slug));
+            return;
+        }
+
+        $proofUrl = '';
+        $proofUpload = arenagamer_handle_match_proof_upload('proof_file');
+        if (is_array($proofUpload) && isset($proofUpload['error'])) {
+            set_alert('danger', 'Erro no upload do comprovante: ' . $proofUpload['error']);
+            redirect(arenagamer_client_url('tournament_detail/' . $slug));
+            return;
+        }
+        if (is_string($proofUpload)) {
+            $proofUrl = $proofUpload;
+        }
+
+        $result = $this->api->record_match_result($matchId, [
+            'winnerParticipantId' => $winnerParticipantId,
+            'homeScore'           => $homeScore,
+            'awayScore'           => $awayScore,
+            'proofUrl'            => $proofUrl,
+        ]);
+
+        if (arenagamer_api_is_success($result)) {
+            set_alert('success', arenagamer_api_message($result, 'Resultado registrado com sucesso'));
+        } else {
+            set_alert('danger', 'Erro: ' . $this->api->get_last_error());
         }
 
         redirect(arenagamer_client_url('tournament_detail/' . $slug));
@@ -547,15 +609,20 @@ class Client extends ClientsController
             $description = trim((string) $this->input->post('description'));
             $action = $this->input->post('wallet_action');
 
+            // Adicionar créditos só é permitido via compra com fatura Perfex
+            // (botão "Comprar créditos"). Depósito manual direto foi removido.
+            if ($action !== 'withdraw') {
+                set_alert('info', 'Para adicionar créditos, utilize "Comprar créditos" — uma fatura será gerada no Perfex e o saldo creditado após o pagamento.');
+                redirect(arenagamer_client_url('wallet'));
+            }
+
             if ($amount <= 0) {
                 set_alert('danger', 'Informe um valor válido');
                 redirect(arenagamer_client_url('wallet'));
             }
 
             $payload = ['amount' => $amount, 'description' => $description];
-            $result = $action === 'withdraw'
-                ? $this->api->wallet_withdraw($payload)
-                : $this->api->wallet_deposit($payload);
+            $result = $this->api->wallet_withdraw($payload);
 
             if (arenagamer_api_is_success($result)) {
                 set_alert('success', arenagamer_api_message($result, 'Operação realizada com sucesso'));

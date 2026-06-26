@@ -152,7 +152,7 @@ $presetMap = arenagamer_presets_autofill_map($presetsData);
         }
 
         if (preset.minPlayersPerTeam > 0 && field('min_participants')) {
-            setValue('min_participants', Math.max(2, preset.minPlayersPerTeam));
+            setValue('min_participants', Math.max(4, preset.minPlayersPerTeam));
         }
 
         if (preset.platform && field('description')) {
