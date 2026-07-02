@@ -76,8 +76,11 @@ $isContact = $userType === 'CONTACT';
 
                 <?php
                 $this->load->view('../../modules/arenagamer/views/client/tournaments/_tournament_config_fields', [
-                    'tournament'           => $t,
-                    'is_edit'              => $isEdit,
+                    'tournament'              => $t,
+                    'is_edit'                 => $isEdit,
+                    'tournament_systems'      => $tournament_systems ?? null,
+                    'tournament_type_options' => $tournament_type_options ?? null,
+                    'tournament_type_labels'  => $tournament_type_labels ?? null,
                     'default_participants_limit' => (int) ($t['participantsLimit'] ?? 20),
                     'participants_solo_help' => $isEdit ? 'Não pode ser alterado após a criação do torneio.' : '',
                     'participants_team_help' => $isEdit ? 'Não pode ser alterado após a criação do torneio.' : 'Número máximo de equipes inscritas.',

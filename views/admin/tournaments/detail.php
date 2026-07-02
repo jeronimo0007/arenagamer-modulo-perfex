@@ -7,20 +7,16 @@
         <?php if ($t): ?>
         <div class="row">
             <div class="col-md-12">
-                <h4 class="tw-font-semibold tw-text-lg tw-text-neutral-700">
-                    <i class="fa fa-trophy"></i> <?php echo htmlspecialchars($t['name']); ?>
-                    <?php echo arenagamer_status_badge($t['status']); ?>
-                    <?php echo arenagamer_tournament_client_badge($t, $client_name ?? null); ?>
-                </h4>
-                <a href="<?php echo admin_url('arenagamer/tournaments'); ?>" class="btn btn-default btn-xs">
-                    <i class="fa fa-arrow-left"></i> Voltar
-                </a>
-                <?php if ($canManage && arenagamer_tournament_is_editable($t)): ?>
-                <a href="<?php echo admin_url('arenagamer/tournament_edit/' . $t['slug']); ?>" class="btn btn-warning btn-xs">
-                    <i class="fa fa-pencil"></i> Editar
-                </a>
-                <?php endif; ?>
-                <hr />
+                <div class="ag-tournament-detail__header mbot15">
+                    <a href="<?php echo admin_url('arenagamer/tournaments'); ?>" class="ag-tournament-detail__back">
+                        <i class="fa fa-arrow-left"></i> Voltar
+                    </a>
+                    <h4 class="ag-tournament-detail__title tw-font-semibold tw-text-lg tw-text-neutral-700">
+                        <i class="fa fa-trophy"></i> <?php echo htmlspecialchars($t['name']); ?>
+                        <?php echo arenagamer_status_badge($t['status']); ?>
+                        <?php echo arenagamer_tournament_client_badge($t, $client_name ?? null); ?>
+                    </h4>
+                </div>
             </div>
         </div>
 
@@ -28,6 +24,49 @@
         $coverImage = (string) ($t['coverImageUrl'] ?? '');
         $gameImage = arenagamer_tournament_game_image_url($t);
         $logoImage = arenagamer_tournament_logo_image_url($t);
+        $allMatches = is_array($all_matches ?? null) ? $all_matches : ($matches['data'] ?? []);
+        $matchesPagination = is_array($matches['pagination'] ?? null) ? $matches['pagination'] : [];
+        $matchesBaseUrl = admin_url('arenagamer/tournament_detail/' . $t['slug']);
+        $matchFilters = is_array($match_filters ?? null) ? $match_filters : [];
+        $matchView = (string) ($match_view ?? 'pending');
+        $knockoutBracket = arenagamer_build_knockout_bracket($allMatches);
+        $isDoubleElimination = arenagamer_is_double_elimination_tournament_type($t['type'] ?? '');
+        $doubleEliminationBrackets = $isDoubleElimination
+            ? arenagamer_build_double_elimination_brackets($allMatches)
+            : null;
+        $hasDoubleEliminationBrackets = $isDoubleElimination && !empty($doubleEliminationBrackets['has_brackets']);
+        $standingsData = arenagamer_api_data($standings ?? null, []);
+        $showClassification = arenagamer_tournament_shows_classification($t);
+        $groupStageBlocks = (($t['type'] ?? '') === 'GROUP_STAGE')
+            ? arenagamer_build_group_stage_blocks($standingsData, $allMatches)
+            : [];
+        $participantStandingMap = $showClassification
+            ? arenagamer_build_participant_standing_map($standingsData)
+            : [];
+        $finalTop3 = arenagamer_build_final_top3_list($standingsData, $t['status'] ?? '', $allMatches);
+        $isRoundRobinElimination = ($t['type'] ?? '') === 'ROUND_ROBIN_ELIMINATION';
+        $isSwiss = ($t['type'] ?? '') === 'SWISS';
+        $hasRoundRobinMatches = false;
+        $hasSwissMatches = false;
+        if ($isRoundRobinElimination) {
+            foreach ($allMatches as $m) {
+                if (is_array($m) && arenagamer_is_league_phase_match($m, 'ROUND_ROBIN_ELIMINATION')) {
+                    $hasRoundRobinMatches = true;
+                    break;
+                }
+            }
+        }
+        if ($isSwiss) {
+            foreach ($allMatches as $m) {
+                if (is_array($m) && arenagamer_is_swiss_phase_match($m)) {
+                    $hasSwissMatches = true;
+                    break;
+                }
+            }
+        }
+        $knockoutConfirmMessage = htmlspecialchars(arenagamer_generate_knockout_confirm_message($t), ENT_QUOTES, 'UTF-8');
+        $advanceRoundConfirmMessage = htmlspecialchars(arenagamer_advance_round_confirm_message($t), ENT_QUOTES, 'UTF-8');
+        $advanceRoundButtonLabel = arenagamer_advance_round_button_label($t);
         ?>
         <?php if ($coverImage !== '' || $logoImage !== '' || $gameImage !== ''): ?>
         <div class="row mbot15">
@@ -73,6 +112,20 @@
                                     <?php endif; ?>
                                 </p>
                                 <?php endif; ?>
+                                <?php
+                                $groupStageSummary = arenagamer_tournament_group_stage_summary($t);
+                                $roundRobinEliminationSummary = arenagamer_tournament_round_robin_elimination_summary($t);
+                                $swissSummary = arenagamer_tournament_swiss_summary($t);
+                                ?>
+                                <?php if ($groupStageSummary !== null): ?>
+                                <p><strong>Fase de grupos:</strong> <?php echo htmlspecialchars($groupStageSummary); ?></p>
+                                <?php endif; ?>
+                                <?php if ($roundRobinEliminationSummary !== null): ?>
+                                <p><strong>Formato:</strong> <?php echo htmlspecialchars($roundRobinEliminationSummary); ?></p>
+                                <?php endif; ?>
+                                <?php if ($swissSummary !== null): ?>
+                                <p><strong>Sistema suíço:</strong> <?php echo htmlspecialchars($swissSummary); ?></p>
+                                <?php endif; ?>
                                 <p><strong>Organizador:</strong> <?php echo isset($t['ownerName']) ? htmlspecialchars($t['ownerName']) : '—'; ?>
                                     <?php if (!empty($t['ownerType'])): ?>
                                     <?php echo arenagamer_owner_type_badge($t['ownerType']); ?>
@@ -107,261 +160,61 @@
                     </div>
                 </div>
 
-                <!-- Matches -->
+                <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_tournament_type_how_it_works_panel', [
+                    'tournament' => $t,
+                ]); ?>
+
+                <?php if ($hasDoubleEliminationBrackets): ?>
                 <div class="panel_s">
-                    <div class="panel-heading"><h4 class="panel-title">Partidas</h4></div>
-                    <div class="panel-body">
-                        <?php if (isset($matches['data']) && !empty($matches['data'])): ?>
-                        <div class="table-responsive">
-                            <table class="table table-striped">
-                                <thead>
-                                    <tr>
-                                        <th>#</th>
-                                        <th>Mandante</th>
-                                        <th>vs</th>
-                                        <th>Visitante</th>
-                                        <th>Placar</th>
-                                        <th>Agendamento</th>
-                                        <th>Status</th>
-                                        <th>Vencedor</th>
-                                        <?php if ($canManage): ?>
-                                        <th>Ações</th>
-                                        <?php endif; ?>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($matches['data'] as $m): ?>
-                                    <?php
-                                        $homeId = $m['homeParticipantId'] ?? null;
-                                        $awayId = $m['awayParticipantId'] ?? null;
-                                        $winnerId = $m['winnerParticipantId'] ?? null;
-                                        $homeName = !empty($m['homeParticipantName']) ? $m['homeParticipantName'] : (!empty($homeId) ? 'Participante #' . (int) $homeId : 'BYE');
-                                        $awayName = !empty($m['awayParticipantName']) ? $m['awayParticipantName'] : (!empty($awayId) ? 'Participante #' . (int) $awayId : 'BYE');
-                                        $matchStatus = $m['status'] ?? '';
-                                        $bothDefined = !empty($homeId) && !empty($awayId);
-                                        $isFinished = in_array($matchStatus, ['COMPLETED', 'WALKOVER', 'CANCELLED'], true);
-                                        $winnerName = '';
-                                        if (!empty($winnerId)) {
-                                            if ($winnerId == $homeId) {
-                                                $winnerName = $homeName;
-                                            } elseif ($winnerId == $awayId) {
-                                                $winnerName = $awayName;
-                                            }
-                                        }
-                                    ?>
-                                    <tr>
-                                        <td>
-                                            <?php echo $m['matchNumber']; ?>
-                                            <?php if (!empty($m['phaseLabel'])): ?>
-                                            <br><small class="text-muted"><?php echo htmlspecialchars($m['phaseLabel']); ?></small>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if (!empty($m['homeParticipantName']) || !empty($homeId)): ?>
-                                                <?php echo htmlspecialchars($homeName); ?>
-                                            <?php else: ?>
-                                                <em>BYE</em>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td class="text-center"><strong>vs</strong></td>
-                                        <td>
-                                            <?php if (!empty($m['awayParticipantName']) || !empty($awayId)): ?>
-                                                <?php echo htmlspecialchars($awayName); ?>
-                                            <?php else: ?>
-                                                <em>BYE</em>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if (isset($m['homeScore']) && isset($m['awayScore'])): ?>
-                                            <?php echo $m['homeScore']; ?> - <?php echo $m['awayScore']; ?>
-                                            <?php else: ?>
-                                            —
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?php echo isset($m['scheduledAt']) ? date('d/m/Y H:i', strtotime($m['scheduledAt'])) : '—'; ?></td>
-                                        <td><?php echo arenagamer_status_badge($m['status']); ?></td>
-                                        <td>
-                                            <?php if ($winnerName !== ''): ?>
-                                            <span class="label label-success"><i class="fa fa-trophy"></i> <?php echo htmlspecialchars($winnerName); ?></span>
-                                            <?php else: ?>
-                                            —
-                                            <?php endif; ?>
-                                            <?php if (!empty($m['resultProofUrl'])): ?>
-                                            <br><a href="<?php echo htmlspecialchars($m['resultProofUrl']); ?>" target="_blank" rel="noopener"><i class="fa fa-paperclip"></i> Comprovante</a>
-                                            <?php endif; ?>
-                                        </td>
-                                        <?php if ($canManage): ?>
-                                        <td class="tw-whitespace-nowrap">
-                                            <button type="button" class="btn btn-default btn-xs" data-toggle="modal"
-                                                    data-target="#reschedule-modal-<?php echo (int) $m['id']; ?>" title="Reagendar">
-                                                <i class="fa fa-calendar"></i>
-                                            </button>
-                                            <?php if ($bothDefined && !$isFinished): ?>
-                                            <button type="button" class="btn btn-success btn-xs" data-toggle="modal" data-target="#result-modal-<?php echo (int) $m['id']; ?>">
-                                                <i class="fa fa-trophy"></i> Registrar resultado
-                                            </button>
-                                            <?php endif; ?>
-                                        </td>
-                                        <?php endif; ?>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <?php if ($canManage): ?>
-                            <?php foreach ($matches['data'] as $m): ?>
-                            <div class="modal fade" id="reschedule-modal-<?php echo (int) $m['id']; ?>" tabindex="-1">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <?php echo form_open(admin_url('arenagamer/reschedule_match/' . (int) $m['id'])); ?>
-                                        <input type="hidden" name="slug" value="<?php echo htmlspecialchars($t['slug']); ?>">
-                                        <div class="modal-header">
-                                            <button type="button" class="close" data-dismiss="modal">&times;</button>
-                                            <h4 class="modal-title">Reagendar partida #<?php echo (int) $m['matchNumber']; ?></h4>
-                                        </div>
-                                        <div class="modal-body">
-                                            <div class="form-group">
-                                                <label>Nova data/hora</label>
-                                                <input type="datetime-local" name="scheduled_at" class="form-control" required
-                                                       value="<?php echo arenagamer_datetime_local_value($m['scheduledAt'] ?? ''); ?>">
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-default" data-dismiss="modal">Cancelar</button>
-                                            <button type="submit" class="btn btn-primary">Reagendar</button>
-                                        </div>
-                                        <?php echo form_close(); ?>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <?php
-                                $rHomeId = $m['homeParticipantId'] ?? null;
-                                $rAwayId = $m['awayParticipantId'] ?? null;
-                                $rStatus = $m['status'] ?? '';
-                                $rBothDefined = !empty($rHomeId) && !empty($rAwayId);
-                                $rFinished = in_array($rStatus, ['COMPLETED', 'WALKOVER', 'CANCELLED'], true);
-                            ?>
-                            <?php if ($rBothDefined && !$rFinished): ?>
-                            <?php
-                                $rHomeName = !empty($m['homeParticipantName']) ? $m['homeParticipantName'] : 'Mandante';
-                                $rAwayName = !empty($m['awayParticipantName']) ? $m['awayParticipantName'] : 'Visitante';
-                            ?>
-                            <div class="modal fade ag-result-modal" id="result-modal-<?php echo (int) $m['id']; ?>" tabindex="-1" role="dialog"
-                                 data-home-id="<?php echo (int) $rHomeId; ?>" data-away-id="<?php echo (int) $rAwayId; ?>"
-                                 data-home-name="<?php echo htmlspecialchars($rHomeName); ?>" data-away-name="<?php echo htmlspecialchars($rAwayName); ?>">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <?php echo form_open_multipart(admin_url('arenagamer/record_match_result/' . (int) $m['id'])); ?>
-                                        <input type="hidden" name="slug" value="<?php echo htmlspecialchars($t['slug']); ?>">
-                                        <div class="modal-header">
-                                            <button type="button" class="close" data-dismiss="modal">&times;</button>
-                                            <h4 class="modal-title">Resultado — Partida #<?php echo (int) $m['matchNumber']; ?></h4>
-                                        </div>
-                                        <div class="modal-body">
-                                            <div class="row">
-                                                <div class="col-xs-6 form-group">
-                                                    <label>Placar — <?php echo htmlspecialchars($rHomeName); ?> <span class="text-danger">*</span></label>
-                                                    <input type="number" min="0" name="home_score" class="form-control ag-score" required>
-                                                </div>
-                                                <div class="col-xs-6 form-group">
-                                                    <label>Placar — <?php echo htmlspecialchars($rAwayName); ?> <span class="text-danger">*</span></label>
-                                                    <input type="number" min="0" name="away_score" class="form-control ag-score" required>
-                                                </div>
-                                            </div>
-                                            <div class="form-group">
-                                                <label class="bold">Vencedor:</label> <span class="ag-auto-winner text-info">defina o placar</span>
-                                                <br><small class="text-muted">Definido automaticamente pelo maior placar.</small>
-                                            </div>
-                                            <div class="form-group">
-                                                <button type="button" class="btn btn-warning btn-xs ag-cheat-toggle">
-                                                    <i class="fa fa-user-secret"></i> Trapaceiro detectado
-                                                </button>
-                                            </div>
-                                            <div class="form-group ag-cheat-block" style="display:none;">
-                                                <label class="bold text-warning">Vencedor manual</label>
-                                                <div class="radio">
-                                                    <label><input type="radio" name="winner_participant_id" value="<?php echo (int) $rHomeId; ?>"> <?php echo htmlspecialchars($rHomeName); ?></label>
-                                                </div>
-                                                <div class="radio">
-                                                    <label><input type="radio" name="winner_participant_id" value="<?php echo (int) $rAwayId; ?>"> <?php echo htmlspecialchars($rAwayName); ?></label>
-                                                </div>
-                                                <small class="text-muted">Com vencedor manual, o placar pode não refletir o vencedor.</small>
-                                            </div>
-                                            <div class="form-group">
-                                                <label>Comprovante do vencedor (imagem) <small class="text-muted">— opcional</small></label>
-                                                <input type="file" name="proof_file" accept="image/*" class="form-control">
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-default" data-dismiss="modal">Cancelar</button>
-                                            <button type="submit" class="btn btn-success"><i class="fa fa-check"></i> Salvar resultado</button>
-                                        </div>
-                                        <?php echo form_close(); ?>
-                                    </div>
-                                </div>
-                            </div>
-                            <?php endif; ?>
-                            <?php endforeach; ?>
-                            <?php echo arenagamer_result_modal_script(); ?>
-                        <?php endif; ?>
-                        <?php else: ?>
-                        <p class="text-muted">Nenhuma partida gerada ainda.</p>
-                        <?php endif; ?>
+                    <div class="panel-heading"><h4 class="panel-title"><i class="fa fa-code-fork"></i> Chaves — eliminação dupla</h4></div>
+                    <div class="panel-body" style="padding: 12px;">
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_double_elimination_brackets', [
+                            'double_elimination_brackets' => $doubleEliminationBrackets,
+                            'can_manage'                  => $canManage,
+                            'participant_standing_map'    => $participantStandingMap,
+                            'final_top3'                  => $finalTop3,
+                            'show_section_title'          => false,
+                        ]); ?>
                     </div>
                 </div>
-
-                <?php $standingsData = arenagamer_api_data($standings ?? null, []); ?>
-                <?php if (is_array($standingsData) && !empty($standingsData)): ?>
-                <?php $hasGroups = false; foreach ($standingsData as $s) { if (isset($s['points']) || isset($s['groupNumber'])) { $hasGroups = true; break; } } ?>
+                <?php elseif (!empty($knockoutBracket['rounds'])): ?>
                 <div class="panel_s">
-                    <div class="panel-heading">
-                        <h4 class="panel-title">
-                            Classificação
-                            <a href="#arenagamer-standings" data-toggle="collapse" class="btn btn-default btn-xs mleft5">
-                                <i class="fa fa-trophy"></i> Verificar posições
-                            </a>
-                        </h4>
-                    </div>
-                    <div class="panel-body">
-                        <div id="arenagamer-standings" class="collapse in table-responsive">
-                            <table class="table table-bordered table-condensed">
-                                <thead>
-                                    <tr>
-                                        <th>#</th>
-                                        <?php if ($hasGroups): ?><th>Grupo</th><?php endif; ?>
-                                        <th>Participante</th>
-                                        <?php if ($hasGroups): ?><th title="Pontos">P</th><th title="Vitórias">V</th><th title="Empates">E</th><th title="Derrotas">D</th><?php else: ?><th>Posição</th><?php endif; ?>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($standingsData as $s): ?>
-                                    <tr>
-                                        <td><?php echo isset($s['position']) ? (int) $s['position'] . 'º' : '—'; ?></td>
-                                        <?php if ($hasGroups): ?><td><?php echo isset($s['groupNumber']) ? 'Grupo ' . (int) $s['groupNumber'] : '—'; ?></td><?php endif; ?>
-                                        <td>
-                                            <?php echo htmlspecialchars($s['participantName'] ?? 'A definir'); ?>
-                                            <?php if (!empty($s['note'])): ?>
-                                            <br><small class="text-muted"><?php echo htmlspecialchars($s['note']); ?></small>
-                                            <?php endif; ?>
-                                        </td>
-                                        <?php if ($hasGroups): ?>
-                                        <td><?php echo (int) ($s['points'] ?? 0); ?></td>
-                                        <td><?php echo (int) ($s['wins'] ?? 0); ?></td>
-                                        <td><?php echo (int) ($s['draws'] ?? 0); ?></td>
-                                        <td><?php echo (int) ($s['losses'] ?? 0); ?></td>
-                                        <?php else: ?>
-                                        <td><?php echo !empty($s['note']) ? htmlspecialchars($s['note']) : '—'; ?></td>
-                                        <?php endif; ?>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
+                    <div class="panel-heading"><h4 class="panel-title"><i class="fa fa-sitemap"></i> Chave eliminatória</h4></div>
+                    <div class="panel-body" style="padding: 12px;">
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_knockout_bracket', [
+                            'knockout_bracket'         => $knockoutBracket,
+                            'can_manage'               => $canManage,
+                            'participant_standing_map' => $participantStandingMap,
+                            'final_top3'               => $finalTop3,
+                        ]); ?>
                     </div>
                 </div>
                 <?php endif; ?>
+
+                <?php if (!empty($groupStageBlocks)): ?>
+                <div class="panel_s">
+                    <div class="panel-heading"><h4 class="panel-title"><i class="fa fa-th-large"></i> Fase de grupos</h4></div>
+                    <div class="panel-body" style="padding: 12px;">
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_group_stage_blocks', [
+                            'group_stage_blocks'       => $groupStageBlocks,
+                            'can_manage'               => $canManage,
+                            'participant_standing_map' => $participantStandingMap,
+                            'advance_per_group'        => arenagamer_group_stage_advance_per_group(),
+                            'show_matches'             => false,
+                            'show_classification'      => $showClassification,
+                            'tournament'               => $t,
+                        ]); ?>
+                    </div>
+                </div>
+                <?php elseif (is_array($standingsData) && !empty($standingsData)): ?>
+                <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_standings_table', [
+                    'standings_data'      => $standingsData,
+                    'show_classification' => $showClassification,
+                    'tournament'          => $t,
+                    'wrapper_class'       => 'ag-standings',
+                ]); ?>
+                <?php endif; ?>
+
 
                 <?php if (!empty($t['participants']) && is_array($t['participants'])): ?>
                 <div class="panel_s">
@@ -476,6 +329,89 @@
                     </div>
                 </div>
                 <?php endif; ?>
+
+                <?php
+                $hasMatchesSection = !empty($groupStageBlocks)
+                    || $hasRoundRobinMatches
+                    || $hasSwissMatches
+                    || $hasDoubleEliminationBrackets
+                    || !empty($knockoutBracket['rounds'])
+                    || !empty($matches['data'])
+                    || !empty($matchesPagination['totalElements']);
+                ?>
+                <?php if ($hasMatchesSection): ?>
+                <div class="panel_s ag-tournament-detail__matches">
+                    <div class="panel-heading"><h4 class="panel-title"><i class="fa fa-gamepad"></i> Partidas</h4></div>
+                    <div class="panel-body">
+                        <?php if ($canManage): ?>
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_bulk_results_wizard', [
+                            'all_matches'     => $allMatches,
+                            'slug'            => $t['slug'],
+                            'record_url_base' => admin_url('arenagamer/record_match_result/'),
+                            'can_manage'      => $canManage,
+                        ]); ?>
+                        <?php endif; ?>
+
+                        <?php if (!empty($groupStageBlocks)): ?>
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_group_stage_matches', [
+                            'group_stage_blocks'       => $groupStageBlocks,
+                            'can_manage'               => $canManage,
+                            'participant_standing_map' => $participantStandingMap,
+                        ]); ?>
+                        <?php endif; ?>
+
+                        <?php if ($hasSwissMatches): ?>
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_swiss_matches', [
+                            'all_matches'              => $allMatches,
+                            'can_manage'               => $canManage,
+                            'participant_standing_map' => $participantStandingMap,
+                            'tournament'               => $t,
+                        ]); ?>
+                        <?php endif; ?>
+
+                        <?php if ($hasRoundRobinMatches): ?>
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_round_robin_matches', [
+                            'all_matches'              => $allMatches,
+                            'can_manage'               => $canManage,
+                            'participant_standing_map' => $participantStandingMap,
+                            'matches_base_url'         => $matchesBaseUrl,
+                        ]); ?>
+                        <?php endif; ?>
+
+                        <?php if (!empty($matches['data']) || !empty($matchesPagination['totalElements'])): ?>
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_matches_list', [
+                            'matches_data'             => $matches['data'] ?? [],
+                            'matches_pagination'       => $matchesPagination,
+                            'matches_base_url'         => $matchesBaseUrl,
+                            'match_view'               => $matchView,
+                            'participant_standing_map' => $participantStandingMap,
+                            'can_manage'               => $canManage,
+                            'skip_knockout'            => $hasDoubleEliminationBrackets || !empty($knockoutBracket['rounds']),
+                            'skip_group_stage'         => !empty($groupStageBlocks),
+                            'skip_round_robin'         => $hasRoundRobinMatches,
+                            'skip_swiss'               => $hasSwissMatches,
+                            'title'                    => 'Lista de partidas',
+                            'show_section_title'       => true,
+                            'show_reschedule'          => true,
+                        ]); ?>
+                        <?php elseif (empty($groupStageBlocks) && !$hasRoundRobinMatches && !$hasSwissMatches && !$hasDoubleEliminationBrackets && empty($knockoutBracket['rounds'])): ?>
+                        <p class="ag-matches-empty">Nenhuma partida gerada ainda.</p>
+                        <?php endif; ?>
+
+                        <?php $this->load->view('../../modules/arenagamer/views/client/tournaments/_match_result_modals', [
+                            'all_matches'      => $allMatches,
+                            'slug'             => $t['slug'],
+                            'record_url_base'  => admin_url('arenagamer/record_match_result/'),
+                            'can_manage'       => $canManage,
+                        ]); ?>
+                        <?php $this->load->view('../../modules/arenagamer/views/admin/tournaments/_match_reschedule_modals', [
+                            'matches_data' => $matches['data'] ?? [],
+                            'slug'         => $t['slug'],
+                            'can_manage'   => $canManage,
+                        ]); ?>
+                    </div>
+                </div>
+                <?php endif; ?>
             </div>
 
             <!-- Actions Sidebar -->
@@ -485,6 +421,13 @@
                     <div class="panel-body">
                         <?php if ($canManage): ?>
                             <?php $status = $t['status']; ?>
+
+                            <?php if (arenagamer_tournament_is_editable($t)): ?>
+                            <a href="<?php echo admin_url('arenagamer/tournament_edit/' . $t['slug']); ?>"
+                               class="btn btn-default btn-block btn-sm">
+                                <i class="fa fa-pencil"></i> Editar torneio
+                            </a>
+                            <?php endif; ?>
 
                             <?php if ($status === 'DRAFT'): ?>
                             <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/open_registration"); ?>"
@@ -502,12 +445,23 @@
                             </a>
                             <?php endif; ?>
 
-                            <?php if ($status === 'REGISTRATION_CLOSED' || $status === 'REGISTRATION_OPEN'): ?>
+                            <?php if (arenagamer_tournament_can_generate_bracket($t, $allMatches)): ?>
+                            <?php $bracketHint = arenagamer_tournament_bracket_hint($t); ?>
+                            <?php if ($bracketHint !== null): ?>
+                            <p class="text-muted"><small><?php echo htmlspecialchars($bracketHint); ?></small></p>
+                            <?php endif; ?>
                             <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/generate_bracket"); ?>"
                                class="btn btn-primary btn-block mtop5"
                                onclick="return confirm('Gerar chaves do torneio?')">
                                 <i class="fa fa-sitemap"></i> Gerar Chaves
                             </a>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'IN_PROGRESS'): ?>
+                            <?php $knockoutPendingHint = arenagamer_tournament_generate_knockout_pending_hint($allMatches, $t['type'] ?? ''); ?>
+                            <?php if ($knockoutPendingHint !== null): ?>
+                            <p class="text-muted mtop5 mbot0"><small><?php echo htmlspecialchars($knockoutPendingHint); ?></small></p>
+                            <?php endif; ?>
                             <?php endif; ?>
 
                             <?php if ($status === 'IN_PROGRESS'): ?>
@@ -518,23 +472,40 @@
                             </a>
                             <?php endif; ?>
 
-                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_generate_knockout($matches['data'] ?? null, $t['type'] ?? '')): ?>
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_tournament_can_clear_matches($t, $allMatches)): ?>
+                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/clear_matches"); ?>"
+                               class="btn btn-danger btn-block mtop5"
+                               onclick="return confirm('Limpar TODAS as partidas, rodadas, seeds e classificação?\n\n• Inscrições são mantidas\n• Status volta para inscrições fechadas\n• Depois: Gerar chaves → resultados dos grupos → Gerar mata-mata\n\nEsta ação não pode ser desfeita.')">
+                                <i class="fa fa-trash"></i> Limpar partidas
+                            </a>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_generate_knockout($allMatches, $t['type'] ?? '')): ?>
                             <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/generate_knockout"); ?>"
                                class="btn btn-primary btn-block mtop5"
-                               onclick="return confirm('Gerar o mata-mata com os classificados de cada grupo?')">
+                               onclick="return confirm('<?php echo $knockoutConfirmMessage; ?>')">
                                 <i class="fa fa-sitemap"></i> Gerar Mata-mata
                             </a>
                             <?php endif; ?>
 
-                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_advance_round($matches['data'] ?? null, $t['type'] ?? '')): ?>
-                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/advance_round"); ?>"
-                               class="btn btn-primary btn-block mtop5"
-                               onclick="return confirm('Gerar a próxima fase com os vencedores da fase atual?')">
-                                <i class="fa fa-sitemap"></i> Gerar Próxima Fase
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_regenerate_knockout($allMatches, $t['type'] ?? '')): ?>
+                            <p class="text-muted mtop5 mbot0"><small>Chave incorreta? Use <strong>Limpar partidas</strong>, depois <strong>Gerar chaves</strong> e <strong>Gerar mata-mata</strong>.</small></p>
+                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/generate_knockout"); ?>"
+                               class="btn btn-warning btn-block mtop5"
+                               onclick="return confirm('ATENÇÃO: prefira Limpar partidas antes de regerar. Continuar mesmo assim?')">
+                                <i class="fa fa-refresh"></i> Regerar Mata-mata
                             </a>
                             <?php endif; ?>
 
-                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_finalize($matches['data'] ?? null, $t['type'] ?? '')): ?>
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_advance_round($allMatches, $t['type'] ?? '', $t)): ?>
+                            <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/advance_round"); ?>"
+                               class="btn btn-primary btn-block mtop5"
+                               onclick="return confirm('<?php echo $advanceRoundConfirmMessage; ?>')">
+                                <i class="fa fa-random"></i> <?php echo htmlspecialchars($advanceRoundButtonLabel); ?>
+                            </a>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'IN_PROGRESS' && arenagamer_matches_can_finalize($allMatches, $t['type'] ?? '', $t)): ?>
                             <a href="<?php echo admin_url("arenagamer/tournament_action/{$t['slug']}/finalize"); ?>"
                                class="btn btn-success btn-block mtop5"
                                onclick="return confirm('Todas as posições estão definidas. Finalizar o torneio?')">

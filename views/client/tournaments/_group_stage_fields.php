@@ -2,43 +2,38 @@
 <?php
 $t = $tournament ?? [];
 $showGroups = ($t['type'] ?? '') === 'GROUP_STAGE';
-$formatFieldsLocked = !empty($format_fields_locked);
 $isTeamFormat = ($t['format'] ?? 'SOLO') === 'TEAM';
 $labelClass = (string) ($label_class ?? 'control-label');
 $helpClass = (string) ($help_class ?? 'help-block');
-$groupsHelpTeam = 'As equipes inscritas serão divididas igualmente entre os grupos na geração da chave.';
-$groupsHelpSolo = 'Os participantes inscritos serão divididos igualmente entre os grupos na geração da chave.';
+$teamsPerGroup = arenagamer_group_stage_teams_per_group();
+$advancePerGroup = arenagamer_group_stage_advance_per_group();
+$participantUnit = $isTeamFormat ? 'equipes' : 'participantes';
+$participantsLimit = (int) ($t['participantsLimit'] ?? 0);
+$groupsCount = arenagamer_tournament_group_stage_groups_count($t);
+$groupsCountLabel = $groupsCount > 0 ? arenagamer_group_stage_groups_count_label($groupsCount) : '';
+$groupsCountPersisted = (int) ($t['groupsCount'] ?? 0) > 0;
 ?>
 <div class="row mtop15" id="group_stage_fields"<?php echo $showGroups ? '' : ' style="display:none;"'; ?>>
-    <div class="col-md-4">
-        <div class="form-group">
-            <label for="groups_count" class="<?php echo htmlspecialchars($labelClass); ?>" id="groups_count_label">Quantidade de grupos</label>
-            <input type="number"
-                   min="1"
-                   name="groups_count"
-                   id="groups_count"
-                   class="form-control"
-                   value="<?php echo htmlspecialchars($t['groupsCount'] ?? ''); ?>"
-                   <?php echo $formatFieldsLocked ? 'readonly' : ''; ?>>
-            <p class="<?php echo htmlspecialchars($helpClass); ?> text-muted mbot0" id="groups_count_help"
-               data-solo-help="<?php echo htmlspecialchars($groupsHelpSolo); ?>"
-               data-team-help="<?php echo htmlspecialchars($groupsHelpTeam); ?>">
-                <?php echo htmlspecialchars($isTeamFormat ? $groupsHelpTeam : $groupsHelpSolo); ?>
-            </p>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="form-group">
-            <label for="advance_per_group" class="<?php echo htmlspecialchars($labelClass); ?>">Classificados por grupo</label>
-            <input type="number"
-                   min="1"
-                   name="advance_per_group"
-                   id="advance_per_group"
-                   class="form-control"
-                   value="<?php echo htmlspecialchars($t['advancePerGroup'] ?? ''); ?>"
-                   <?php echo $formatFieldsLocked ? 'readonly' : ''; ?>>
-            <p class="<?php echo htmlspecialchars($helpClass); ?> text-muted mbot0">
-                Quantos de cada grupo avançam para o mata-mata. Use 2 para gerar disputa de 3º lugar.
+    <div class="col-md-12">
+        <div class="well well-sm mbot0">
+            <i class="fa fa-th-large"></i>
+            <strong>Fase de grupos:</strong>
+            <span class="label label-primary mleft5"><?php echo $teamsPerGroup; ?> <?php echo htmlspecialchars($participantUnit); ?> por grupo</span>
+            <span class="label label-info mleft5"><?php echo $advancePerGroup; ?> classificam por grupo</span>
+            <span class="label label-default mleft5" id="group_stage_groups_count_wrap"<?php echo $groupsCountLabel === '' ? ' style="display:none;"' : ''; ?>>
+                <span id="group_stage_groups_count"><?php echo htmlspecialchars($groupsCountLabel); ?></span>
+            </span>
+            <p class="<?php echo htmlspecialchars($helpClass); ?> text-muted mtop10 mbot0">
+                Configuração fixa: cada grupo tem <?php echo $teamsPerGroup; ?> <?php echo htmlspecialchars($participantUnit); ?>
+                e os <?php echo $advancePerGroup; ?> melhores avançam para o mata-mata.
+                O limite de inscritos deve ser múltiplo de <?php echo $teamsPerGroup; ?> (ex.: 4, 8, 12, 16…).
+                <?php if ($groupsCountPersisted): ?>
+                Grupos já formados na geração das chaves.
+                <?php else: ?>
+                Com <strong><span id="group_stage_participants_hint"><?php echo $participantsLimit >= $teamsPerGroup ? (int) $participantsLimit : '—'; ?></span></strong>
+                <?php echo htmlspecialchars($participantUnit); ?> inscrit<?php echo $isTeamFormat ? 'as' : 'os'; ?>, haverá
+                <strong><span id="group_stage_groups_hint"><?php echo $groupsCount > 0 ? (int) $groupsCount : '—'; ?></span></strong> grupo(s).
+                <?php endif; ?>
             </p>
         </div>
     </div>
@@ -46,39 +41,93 @@ $groupsHelpSolo = 'Os participantes inscritos serão divididos igualmente entre 
 <script>
 (function () {
     var typeEl = document.getElementById('type');
+    var formatEl = document.getElementById('format');
     var groupFields = document.getElementById('group_stage_fields');
-    var groupsCountEl = document.getElementById('groups_count');
-    var advancePerGroupEl = document.getElementById('advance_per_group');
-    var formatFieldsLocked = <?php echo $formatFieldsLocked ? 'true' : 'false'; ?>;
+    var participantsLimitEl = document.getElementById('participants_limit');
+    var groupsCountWrap = document.getElementById('group_stage_groups_count_wrap');
+    var groupsCountEl = document.getElementById('group_stage_groups_count');
+    var participantsHintEl = document.getElementById('group_stage_participants_hint');
+    var groupsHintEl = document.getElementById('group_stage_groups_hint');
+    var teamsPerGroup = <?php echo (int) $teamsPerGroup; ?>;
+    var groupsCountPersisted = <?php echo $groupsCountPersisted ? 'true' : 'false'; ?>;
 
     if (!typeEl || !groupFields) {
         return;
     }
 
+    function isTeamFormat() {
+        return formatEl && formatEl.value === 'TEAM';
+    }
+
+    function participantUnit() {
+        return isTeamFormat() ? 'equipes' : 'participantes';
+    }
+
+    function groupsCountFromParticipants(total) {
+        total = parseInt(total, 10);
+        if (!total || total < teamsPerGroup || total % teamsPerGroup !== 0) {
+            return 0;
+        }
+        return Math.floor(total / teamsPerGroup);
+    }
+
+    function groupsCountLabel(count) {
+        count = parseInt(count, 10);
+        if (!count || count < 1) {
+            return '';
+        }
+        return count + ' grupo' + (count === 1 ? '' : 's');
+    }
+
+    function updateGroupsPreview() {
+        if (groupsCountPersisted || typeEl.value !== 'GROUP_STAGE') {
+            return;
+        }
+
+        var total = participantsLimitEl ? parseInt(participantsLimitEl.value, 10) : 0;
+        var groups = groupsCountFromParticipants(total);
+        var label = groupsCountLabel(groups);
+
+        if (participantsHintEl) {
+            participantsHintEl.textContent = total >= teamsPerGroup ? String(total) : '—';
+        }
+        if (groupsHintEl) {
+            groupsHintEl.textContent = groups > 0 ? String(groups) : '—';
+        }
+        if (groupsCountWrap && groupsCountEl) {
+            if (label) {
+                groupsCountWrap.style.display = '';
+                groupsCountEl.textContent = label;
+            } else {
+                groupsCountWrap.style.display = 'none';
+                groupsCountEl.textContent = '';
+            }
+        }
+    }
+
     function syncGroupFieldsVisibility() {
         var isGroupStage = typeEl.value === 'GROUP_STAGE';
         groupFields.style.display = isGroupStage ? '' : 'none';
-
-        if (!formatFieldsLocked) {
-            [groupsCountEl, advancePerGroupEl].forEach(function (el) {
-                if (!el) { return; }
-                if (isGroupStage) {
-                    el.removeAttribute('disabled');
-                } else {
-                    el.setAttribute('disabled', 'disabled');
-                }
-            });
+        if (isGroupStage) {
+            updateGroupsPreview();
         }
     }
 
-    if (!formatFieldsLocked) {
-        typeEl.addEventListener('change', syncGroupFieldsVisibility);
-        if (typeof jQuery !== 'undefined' && jQuery(typeEl).hasClass('selectpicker')) {
-            jQuery(typeEl).on('changed.bs.select', syncGroupFieldsVisibility);
-        }
+    typeEl.addEventListener('change', syncGroupFieldsVisibility);
+    if (typeof jQuery !== 'undefined' && jQuery(typeEl).hasClass('selectpicker')) {
+        jQuery(typeEl).on('changed.bs.select', syncGroupFieldsVisibility);
     }
 
-    document.addEventListener('arenagamer:format-changed', syncGroupFieldsVisibility);
+    if (participantsLimitEl) {
+        participantsLimitEl.addEventListener('input', updateGroupsPreview);
+        participantsLimitEl.addEventListener('change', updateGroupsPreview);
+    }
+
+    document.addEventListener('arenagamer:format-changed', function () {
+        syncGroupFieldsVisibility();
+    });
+    document.addEventListener('arenagamer:participants-fields-updated', updateGroupsPreview);
+    document.addEventListener('arenagamer:participants-limit-constraint-changed', updateGroupsPreview);
 
     syncGroupFieldsVisibility();
 })();

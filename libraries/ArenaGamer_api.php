@@ -492,6 +492,73 @@ class ArenaGamer_api
         return $this->request('GET', '/public/tournament-pricing', null, self::AUTH_BASIC);
     }
 
+    // GET /api/v1/admin/tournament-systems
+    // PUT /api/v1/admin/tournament-systems
+    // PATCH /api/v1/admin/tournament-systems/{type}
+    public function get_tournament_systems()
+    {
+        if (!$this->require_staff_context()) {
+            return null;
+        }
+
+        return $this->request('GET', '/admin/tournament-systems');
+    }
+
+    public function update_tournament_systems(array $data)
+    {
+        if (!$this->require_staff_context()) {
+            return null;
+        }
+
+        return $this->request('PUT', '/admin/tournament-systems', $this->normalize_tournament_systems_payload($data));
+    }
+
+    public function patch_tournament_system($type, array $data)
+    {
+        if (!$this->require_staff_context()) {
+            return null;
+        }
+
+        $type = strtoupper(trim((string) $type));
+        if ($type === '') {
+            $this->last_error = 'Tipo de torneio inválido.';
+
+            return null;
+        }
+
+        return $this->request('PATCH', '/admin/tournament-systems/' . rawurlencode($type), [
+            'enabled' => !empty($data['enabled']),
+        ]);
+    }
+
+    public function get_public_tournament_systems()
+    {
+        return $this->request('GET', '/public/tournament-systems', null, self::AUTH_BASIC);
+    }
+
+    private function normalize_tournament_systems_payload(array $data)
+    {
+        $systems = [];
+
+        foreach ($data['systems'] ?? [] as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $type = strtoupper(trim((string) ($item['type'] ?? '')));
+            if ($type === '') {
+                continue;
+            }
+
+            $systems[] = [
+                'type'    => $type,
+                'enabled' => !empty($item['enabled']),
+            ];
+        }
+
+        return ['systems' => $systems];
+    }
+
     private function normalize_tournament_pricing_payload(array $data)
     {
         return [
@@ -737,7 +804,7 @@ class ArenaGamer_api
 
     // --- Tournaments (Common) ---
     // GET    /api/v1/common/tournaments/{slug}
-    // GET    /api/v1/common/tournaments/{slug}/matches
+    // GET    /api/v1/common/tournaments/{slug}/matches?page&size&finished&scheduled&sort
     // GET    /api/v1/common/tournaments/my-joined
     // GET    /api/v1/common/tournaments/my-created
     // POST   /api/v1/common/tournaments
@@ -853,9 +920,37 @@ class ArenaGamer_api
         return $this->request('GET', '/common/tournaments/' . rawurlencode($slug));
     }
 
-    public function get_tournament_matches($slug)
+    /**
+     * @param array{page?:int,size?:int,finished?:bool,scheduled?:bool,sort?:string|array} $options
+     */
+    public function get_tournament_matches($slug, array $options = [])
     {
-        return $this->request('GET', '/common/tournaments/' . rawurlencode($slug) . '/matches');
+        $query = [];
+
+        if (array_key_exists('page', $options)) {
+            $query['page'] = max(0, (int) $options['page']);
+        }
+        if (array_key_exists('size', $options)) {
+            $query['size'] = max(1, (int) $options['size']);
+        }
+        if (array_key_exists('finished', $options)) {
+            $query['finished'] = $options['finished'] ? 'true' : 'false';
+        }
+        if (array_key_exists('scheduled', $options)) {
+            $query['scheduled'] = $options['scheduled'] ? 'true' : 'false';
+        }
+        if (!empty($options['sort'])) {
+            $sort = $options['sort'];
+            $query['sort'] = is_array($sort) ? array_values($sort) : [(string) $sort];
+        }
+
+        return $this->request(
+            'GET',
+            '/common/tournaments/' . rawurlencode($slug) . '/matches',
+            null,
+            true,
+            $query
+        );
     }
 
     public function get_tournament_standings($slug)
@@ -943,6 +1038,22 @@ class ArenaGamer_api
     public function generate_knockout($slug)
     {
         return $this->request('POST', '/common/tournaments/' . rawurlencode($slug) . '/generate-knockout');
+    }
+
+    /**
+     * DELETE /api/v1/admin/tournaments/{slug}/matches — remove partidas, rodadas, seeds e classificação.
+     * Requer JWT staff (ADMIN ou MANAGER). Reseta status IN_PROGRESS → REGISTRATION_CLOSED.
+     */
+    public function clear_tournament_matches($slug)
+    {
+        if (!$this->require_staff_context()) {
+            return null;
+        }
+
+        return $this->request(
+            'DELETE',
+            '/admin/tournaments/' . rawurlencode($slug) . '/matches'
+        );
     }
 
     public function cancel_tournament($slug)
@@ -1051,7 +1162,7 @@ class ArenaGamer_api
             $payload['feePercentage'] = max(0, (float) ($data['feePercentage'] ?? 0));
         }
 
-        foreach (['groupsCount', 'teamsPerGroup', 'advancePerGroup', 'bestOf'] as $field) {
+        foreach (['groupsCount', 'teamsPerGroup', 'advancePerGroup', 'advanceToKnockout', 'bestOf'] as $field) {
             if (!array_key_exists($field, $data)) {
                 continue;
             }
@@ -1375,6 +1486,19 @@ class ArenaGamer_api
                 break;
             case 'PUT':
                 curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+                if ($data !== null) {
+                    $body = json_encode($data, JSON_UNESCAPED_UNICODE);
+                    if ($body === false) {
+                        $this->last_error = 'Erro ao serializar JSON: ' . json_last_error_msg();
+                        curl_close($ch);
+
+                        return null;
+                    }
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+                }
+                break;
+            case 'PATCH':
+                curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PATCH');
                 if ($data !== null) {
                     $body = json_encode($data, JSON_UNESCAPED_UNICODE);
                     if ($body === false) {

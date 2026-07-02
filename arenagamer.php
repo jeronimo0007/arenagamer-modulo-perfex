@@ -197,9 +197,8 @@ function arenagamer_module_init_menu_items()
  */
 function arenagamer_admin_head()
 {
-    $CI = &get_instance();
-    if ($CI->uri->segment(2) === 'arenagamer') {
-        echo '<link rel="stylesheet" href="' . module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/css/arenagamer.css') . '">';
+    if (arenagamer_is_admin_route()) {
+        arenagamer_enqueue_stylesheet();
     }
 }
 
@@ -208,10 +207,13 @@ function arenagamer_admin_head()
  */
 function arenagamer_admin_footer()
 {
-    $CI = &get_instance();
-    if ($CI->uri->segment(2) === 'arenagamer') {
-        echo '<script src="' . module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/js/arenagamer.js') . '"></script>';
+    if (!arenagamer_is_admin_route()) {
+        return;
     }
+
+    $jsPath = ARENAGAMER_MODULE_PATH . 'assets/js/arenagamer.js';
+    $jsVer = is_file($jsPath) ? filemtime($jsPath) : time();
+    echo '<script src="' . module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/js/arenagamer.js') . '?v=' . $jsVer . '"></script>';
 }
 
 function arenagamer_clients_init()
@@ -237,9 +239,8 @@ function arenagamer_clients_init()
 
 function arenagamer_clients_head()
 {
-    $CI = &get_instance();
-    if ($CI->router->fetch_module() === 'arenagamer' && $CI->router->fetch_class() === 'client') {
-        echo '<link rel="stylesheet" href="' . module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/css/arenagamer.css') . '">';
+    if (arenagamer_is_client_route()) {
+        arenagamer_enqueue_stylesheet();
     }
 }
 
@@ -250,7 +251,7 @@ function arenagamer_clients_submenu_credits()
     }
 
     $CI = &get_instance();
-    if ($CI->router->fetch_module() !== 'arenagamer') {
+    if (!arenagamer_is_client_route()) {
         return;
     }
 
@@ -273,7 +274,7 @@ function arenagamer_clients_submenu_credits()
 function arenagamer_clients_footer()
 {
     $CI = &get_instance();
-    if ($CI->router->fetch_module() !== 'arenagamer' || $CI->router->fetch_class() !== 'client') {
+    if (!arenagamer_is_client_route()) {
         return;
     }
 
@@ -281,12 +282,13 @@ function arenagamer_clients_footer()
         return;
     }
 
-    if (!arenagamer_contact_can_buy_credits()) {
-        return;
+    if (arenagamer_contact_can_buy_credits()) {
+        $CI->load->view('../../modules/arenagamer/views/client/partials/buy_credits_modal');
     }
 
-    $CI->load->view('../../modules/arenagamer/views/client/partials/buy_credits_modal');
-    echo '<script src="' . module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/js/arenagamer.js') . '"></script>';
+    $jsPath = ARENAGAMER_MODULE_PATH . 'assets/js/arenagamer.js';
+    $jsVer = is_file($jsPath) ? filemtime($jsPath) : time();
+    echo '<script src="' . module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/js/arenagamer.js') . '?v=' . $jsVer . '"></script>';
 }
 
 function arenagamer_on_invoice_status_changed($data)
