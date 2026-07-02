@@ -10,6 +10,7 @@ $authUser = $auth_user ?? null;
 $currentPlan = is_array($current_plan ?? null) ? $current_plan : arenagamer_contact_plan($authUser);
 $pricing = $tournament_pricing ?? arenagamer_tournament_pricing_local();
 $tournamentLimitReachedPreview = arenagamer_plan_tournament_limit_reached($currentPlan);
+$planMaxParticipants = arenagamer_plan_participants_hard_limit($currentPlan) ?? 0;
 $defaultLimit = (int) ($t['participantsLimit'] ?? 0);
 if ($defaultLimit <= 0) {
     $defaultLimit = arenagamer_plan_included_participants($currentPlan, $pricing, !$tournamentLimitReachedPreview);
@@ -19,6 +20,9 @@ $includedForBilling = (int) ($costBreakdown['includedParticipants'] ?? arenagame
 $basePrice = (float) ($pricing['baseTournamentPrice'] ?? 0);
 $extraPrice = (float) ($pricing['extraParticipantPrice'] ?? 0);
 $defaultLimit = (int) ($t['participantsLimit'] ?? $includedForBilling);
+if ($planMaxParticipants > 0 && !$isEdit && $defaultLimit > $planMaxParticipants) {
+    $defaultLimit = $planMaxParticipants;
+}
 $planIncludedParticipants = arenagamer_plan_free_max_participants($currentPlan);
 $allowsEntryFeeByPlan = arenagamer_plan_allows_entry_fee($currentPlan);
 $entryFeeMinCreationCost = arenagamer_entry_fee_min_creation_cost();
@@ -75,7 +79,7 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
 
             <br>
             <?php if ($planParticipantBenefitsActive && $planIncludedParticipants > 0): ?>
-            Participantes inclusos no plano (sem custo avulso): <strong><?php echo $planIncludedParticipants; ?></strong>
+            Máximo de participantes no plano: <strong><?php echo $planIncludedParticipants; ?></strong>
             <br>
             <?php endif; ?>
             <br>
@@ -99,17 +103,23 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
         <?php
         $participantsSoloHelp = $isEdit
             ? 'Não pode ser alterado após a criação do torneio.'
-            : ($planParticipantBenefitsActive
-                ? 'Até ' . $includedForBilling . ' inclusos no plano; acima disso: ' . arenagamer_format_credits($extraPrice) . ' por participante avulso.'
-                : 'Preço padrão: ' . arenagamer_format_credits($extraPrice) . ' por participante acima de ' . $includedForBilling . '.');
+            : ($planMaxParticipants > 0
+                ? 'Seu plano permite até ' . $planMaxParticipants . ' participantes por torneio.'
+                : ($planParticipantBenefitsActive
+                    ? 'Até ' . $includedForBilling . ' inclusos no plano; acima disso: ' . arenagamer_format_credits($extraPrice) . ' por participante avulso.'
+                    : 'Preço padrão: ' . arenagamer_format_credits($extraPrice) . ' por participante acima de ' . $includedForBilling . '.'));
         $participantsTeamHelp = $isEdit
             ? 'Não pode ser alterado após a criação do torneio.'
-            : 'Número máximo de equipes inscritas neste campeonato.';
+            : ($planMaxParticipants > 0
+                ? 'Seu plano permite até ' . $planMaxParticipants . ' equipes por torneio.'
+                : 'Número máximo de equipes inscritas neste campeonato.');
         $participantsHelpText = $isEdit
             ? 'Não pode ser alterado após a criação do torneio.'
-            : ($planParticipantBenefitsActive
-                ? 'Até ' . $includedForBilling . ' inclusos no plano; acima disso: ' . arenagamer_format_credits($extraPrice) . ' por participante avulso.'
-                : 'Preço padrão: ' . arenagamer_format_credits($extraPrice) . ' por participante acima de ' . $includedForBilling . '.');
+            : ($planMaxParticipants > 0
+                ? 'Seu plano permite até ' . $planMaxParticipants . ' participantes por torneio.'
+                : ($planParticipantBenefitsActive
+                    ? 'Até ' . $includedForBilling . ' inclusos no plano; acima disso: ' . arenagamer_format_credits($extraPrice) . ' por participante avulso.'
+                    : 'Preço padrão: ' . arenagamer_format_credits($extraPrice) . ' por participante acima de ' . $includedForBilling . '.'));
 
         $this->load->view('../../modules/arenagamer/views/client/tournaments/_basic_info_fields', [
             'tournament'  => $t,
@@ -120,10 +130,14 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
         $this->load->view('../../modules/arenagamer/views/client/tournaments/_tournament_config_fields', [
             'tournament'                      => $t,
             'is_edit'                         => $isEdit,
+            'tournament_systems'              => $tournament_systems ?? null,
+            'tournament_type_options'         => $tournament_type_options ?? null,
+            'tournament_type_labels'          => $tournament_type_labels ?? null,
             'default_participants_limit'      => $defaultLimit,
             'included_for_billing'            => $includedForBilling,
             'extra_participant_price'         => $extraPrice,
             'plan_participant_benefits_active'=> $planParticipantBenefitsActive,
+            'plan_max_participants'           => $planMaxParticipants,
             'participants_solo_help'          => $participantsSoloHelp,
             'participants_team_help'          => $participantsTeamHelp,
             'participants_help_text'          => $participantsHelpText,
@@ -291,6 +305,7 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
     var planIncluded = <?php echo (int) $includedForBilling; ?>;
     var standardIncluded = <?php echo (int) $standardIncludedForBilling; ?>;
     var planParticipantBenefitsActive = <?php echo $planParticipantBenefitsActive ? 'true' : 'false'; ?>;
+    var planMaxParticipants = <?php echo (int) $planMaxParticipants; ?>;
     var basePrice = <?php echo json_encode($basePrice); ?>;
     var extraPrice = <?php echo json_encode($extraPrice); ?>;
     var tournamentLimitReached = <?php echo $tournamentLimitReached ? 'true' : 'false'; ?>;
@@ -301,6 +316,18 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
 
     var form = document.getElementById(<?php echo json_encode($formId); ?>);
     var input = document.getElementById('participants_limit');
+
+    function getParticipantsLimitInput() {
+        return document.getElementById('participants_limit');
+    }
+
+    document.addEventListener('arenagamer:participants-limit-constraint-changed', function () {
+        input = getParticipantsLimitInput();
+    });
+    document.addEventListener('arenagamer:participants-fields-updated', function () {
+        input = getParticipantsLimitInput();
+        updatePreview();
+    });
     var entryFeeInput = document.getElementById('entry_fee_credits');
     var entryFeeHelp = document.getElementById('entry-fee-help');
     var entryFeePlanStatus = document.getElementById('entry-fee-plan-status');
@@ -390,6 +417,100 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
         return prizeFundingInput && (prizeFundingInput.value === 'ENTRY_FEES' || prizeFundingInput.value === 'FIXED');
     }
 
+    function clampParticipantsLimit(value) {
+        return snapParticipantsLimitValue(value, false);
+    }
+
+    function isEliminationTournamentType() {
+        var typeEl = document.getElementById('type');
+        if (!typeEl) {
+            return false;
+        }
+        var type = typeEl.value;
+        return type === 'SINGLE_ELIMINATION' || type === 'DOUBLE_ELIMINATION';
+    }
+
+    function isPowerOfTwo(value) {
+        value = parseInt(value, 10);
+        return value >= 2 && (value & (value - 1)) === 0;
+    }
+
+    function validateParticipantsLimitMessage() {
+        input = getParticipantsLimitInput();
+        if (!input) {
+            return null;
+        }
+        var limit = parseInt(input.value, 10) || 0;
+        var floor = configMinParticipants();
+        if (limit < floor) {
+            return 'O limite deve ser pelo menos ' + floor + '.';
+        }
+        if (isEliminationTournamentType()) {
+            if (!isPowerOfTwo(limit)) {
+                return 'Na eliminação, o limite deve ser 4, 8, 16, 32…';
+            }
+        } else {
+            var step = getParticipantsLimitStep();
+            if ((limit - floor) % step !== 0) {
+                return 'O limite deve aumentar de ' + step + ' em ' + step + ' (ex.: ' + floor + ', ' + (floor + step) + '…).';
+            }
+        }
+        if (planMaxParticipants > 0 && limit > planMaxParticipants) {
+            return 'Seu plano permite no máximo ' + planMaxParticipants + ' participantes por torneio.';
+        }
+        return null;
+    }
+
+    function getMinParticipantsInput() {
+        return document.getElementById('min_participants');
+    }
+
+    function validateMinParticipantsMessage() {
+        var minInput = getMinParticipantsInput();
+        var limitInput = getParticipantsLimitInput();
+        if (!minInput || !limitInput) {
+            return null;
+        }
+        var min = parseInt(minInput.value, 10) || 0;
+        var limit = parseInt(limitInput.value, 10) || 0;
+        if (min > limit) {
+            return 'O mínimo de participantes não pode ser maior que o limite (' + limit + ').';
+        }
+        var floor = configMinParticipants();
+        if (min < floor) {
+            return 'O mínimo de participantes deve ser pelo menos ' + floor + '.';
+        }
+        if (isEliminationTournamentType()) {
+            if (!isPowerOfTwo(min)) {
+                return 'Na eliminação, o mínimo deve ser 4, 8, 16, 32…';
+            }
+        } else {
+            var step = getParticipantsLimitStep();
+            if ((min - floor) % step !== 0) {
+                return 'O mínimo deve aumentar de ' + step + ' em ' + step + ' (ex.: ' + floor + ', ' + (floor + step) + '…).';
+            }
+        }
+        return null;
+    }
+
+    function getParticipantsLimitStep() {
+        if (window.arenagamerParticipantsLimitConstraint) {
+            return window.arenagamerParticipantsLimitConstraint.getStep();
+        }
+        return 1;
+    }
+
+    function configMinParticipants() {
+        return <?php echo (int) arenagamer_tournament_min_participants(); ?>;
+    }
+
+    function snapParticipantsLimitValue(value, roundUp) {
+        if (window.arenagamerParticipantsLimitConstraint) {
+            return window.arenagamerParticipantsLimitConstraint.snap(value, roundUp);
+        }
+        return Math.max(2, parseInt(value, 10) || 2);
+    }
+
     function findParticipantsToUnlockEntryFee(startLimit) {
         if (extraPrice <= 0 || !input || input.readOnly) {
             return null;
@@ -397,10 +518,33 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
 
         var included = getIncludedForBilling();
         var target = entryFeeMinCreationCost;
-        startLimit = Math.max(2, parseInt(startLimit, 10) || included);
-        var maxLimit = Math.max(startLimit + 500, included + Math.ceil(target / extraPrice) + 50);
+        startLimit = snapParticipantsLimitValue(startLimit, false);
+        startLimit = Math.max(configMinParticipants(), startLimit);
 
-        for (var limit = startLimit; limit <= maxLimit; limit++) {
+        var step = getParticipantsLimitStep();
+        var maxLimit = planMaxParticipants > 0
+            ? planMaxParticipants
+            : Math.max(startLimit + 500, included + Math.ceil(target / extraPrice) + 50);
+
+        if (window.arenagamerParticipantsLimitConstraint
+            && typeof window.arenagamerParticipantsLimitConstraint.eachLimitFrom === 'function') {
+            var found = null;
+            window.arenagamerParticipantsLimitConstraint.eachLimitFrom(startLimit, maxLimit, function (limit) {
+                var breakdown = computeBreakdown(limit);
+                var eligibleCost = Math.max(0, breakdown.normalSubtotal - breakdown.planDiscount);
+                if (eligibleCost >= target) {
+                    found = {
+                        limit: limit,
+                        added: limit - startLimit,
+                        breakdown: breakdown
+                    };
+                    return false;
+                }
+            });
+            return found;
+        }
+
+        for (var limit = startLimit; limit <= maxLimit; limit += step) {
             var breakdown = computeBreakdown(limit);
             var eligibleCost = Math.max(0, breakdown.normalSubtotal - breakdown.planDiscount);
             if (eligibleCost >= target) {
@@ -426,12 +570,16 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
             return;
         }
 
-        input.value = result.limit;
+        if (window.arenagamerParticipantsLimitConstraint && typeof window.arenagamerParticipantsLimitConstraint.setLimit === 'function') {
+            window.arenagamerParticipantsLimitConstraint.setLimit(result.limit);
+        } else if (input) {
+            input.value = result.limit;
+        }
         updatePreview();
     }
 
-    function syncUnlockEntryFeeButtons(b, allowed) {
-        var show = !isEdit && !planAllowsEntryFee && !allowed && extraPrice > 0 && input && !input.readOnly;
+    function syncUnlockEntryFeeButtons(b) {
+        var show = !isEdit && !planAllowsEntryFee && extraPrice > 0 && input && !input.readOnly;
         var result = show ? findParticipantsToUnlockEntryFee(input.value) : null;
         var label = 'Liberar taxa de inscrição';
         var hint = 'Será cobrado extra em participantes avulsos para liberar a taxa de inscrição.';
@@ -488,7 +636,7 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
             entryFeePlanStatus.textContent = (allowed || fundingAllowed) ? 'liberada' : 'não liberada';
         }
 
-        syncUnlockEntryFeeButtons(b, fundingAllowed);
+        syncUnlockEntryFeeButtons(b);
     }
 
     function publishCreationCosts(b) {
@@ -581,10 +729,20 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
         }
     }
 
-    if (input) {
-        input.addEventListener('input', updatePreview);
-        updatePreview();
+    if (form) {
+        form.addEventListener('input', function (event) {
+            if (!event.target) {
+                return;
+            }
+            if (event.target.id === 'participants_limit' || event.target.id === 'min_participants') {
+                input = getParticipantsLimitInput();
+                updatePreview();
+            }
+        });
     }
+
+    input = getParticipantsLimitInput();
+    updatePreview();
 
     [unlockEntryFeeBtn, unlockEntryFeeParticipantsBtn].forEach(function (btn) {
         if (btn) {
@@ -604,6 +762,20 @@ $tournamentsRemaining = (int) ($costBreakdown['freeTournamentsRemaining'] ?? 0);
             }
 
             if (!form.checkValidity()) {
+                return;
+            }
+
+            var participantsError = validateParticipantsLimitMessage();
+            if (participantsError) {
+                window.alert(participantsError);
+                event.preventDefault();
+                return;
+            }
+
+            var minError = validateMinParticipantsMessage();
+            if (minError) {
+                window.alert(minError);
+                event.preventDefault();
                 return;
             }
 

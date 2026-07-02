@@ -61,7 +61,6 @@ if ($maxPlayers < 1) {
     var participantsLabel = document.getElementById('participants_limit_label');
     var participantsHelp = document.getElementById('participants_limit_help');
     var minParticipantsLabel = document.getElementById('min_participants_label');
-    var groupsCountHelp = document.getElementById('groups_count_help');
     var formatFieldsLocked = <?php echo $formatFieldsLocked ? 'true' : 'false'; ?>;
 
     if (!formatEl || !teamFields) {
@@ -90,10 +89,15 @@ if ($maxPlayers < 1) {
                 participantsHelp.textContent = soloHelp;
             }
         }
-        if (groupsCountHelp && groupsCountHelp.dataset) {
-            var groupsSoloHelp = groupsCountHelp.dataset.soloHelp || '';
-            var groupsTeamHelp = groupsCountHelp.dataset.teamHelp || '';
-            groupsCountHelp.textContent = team && groupsTeamHelp ? groupsTeamHelp : groupsSoloHelp;
+        var minParticipantsHelp = document.getElementById('min_participants_help');
+        if (minParticipantsHelp && minParticipantsHelp.dataset) {
+            var minSoloHelp = minParticipantsHelp.dataset.soloHelp || '';
+            var minTeamHelp = minParticipantsHelp.dataset.teamHelp || '';
+            if (team && minTeamHelp) {
+                minParticipantsHelp.textContent = minTeamHelp;
+            } else if (!team && minSoloHelp) {
+                minParticipantsHelp.textContent = minSoloHelp;
+            }
         }
 
         document.dispatchEvent(new CustomEvent('arenagamer:format-changed', {

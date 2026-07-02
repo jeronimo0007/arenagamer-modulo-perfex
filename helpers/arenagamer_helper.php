@@ -68,8 +68,9 @@ function arenagamer_tournament_type_labels()
     return [
         'SINGLE_ELIMINATION' => 'Eliminação simples',
         'DOUBLE_ELIMINATION' => 'Eliminação dupla',
-        'ROUND_ROBIN'        => 'Pontos corridos',
-        'GROUP_STAGE'        => 'Fase de grupos',
+        'ROUND_ROBIN'              => 'Pontos corridos',
+        'ROUND_ROBIN_ELIMINATION'  => 'Pontos corridos + eliminatória',
+        'GROUP_STAGE'              => 'Fase de grupos',
         'SWISS'              => 'Sistema suíço',
     ];
 }
@@ -79,11 +80,427 @@ function arenagamer_tournament_type_options()
     return array_keys(arenagamer_tournament_type_labels());
 }
 
+/**
+ * Lista padrão de sistemas de torneio (todos habilitados).
+ *
+ * @return array<int,array{type:string,label:string,enabled:bool,displayOrder:int}>
+ */
+function arenagamer_tournament_systems_default()
+{
+    $systems = [];
+    $order = 1;
+
+    foreach (arenagamer_tournament_type_labels() as $type => $label) {
+        $systems[] = [
+            'type'         => $type,
+            'label'        => $label,
+            'enabled'      => true,
+            'displayOrder' => $order++,
+        ];
+    }
+
+    return $systems;
+}
+
+/**
+ * Normaliza a resposta da API de sistemas de torneio.
+ *
+ * @return array<int,array<string,mixed>>
+ */
+function arenagamer_tournament_systems_normalize($data)
+{
+    if (!is_array($data)) {
+        return [];
+    }
+
+    if (isset($data['systems']) && is_array($data['systems'])) {
+        $data = $data['systems'];
+    }
+
+    if (isset($data['type']) && !array_key_exists(0, $data)) {
+        $data = [$data];
+    }
+
+    $defaults = arenagamer_tournament_type_labels();
+    $systems = [];
+
+    foreach ($data as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $type = strtoupper(trim((string) ($item['type'] ?? '')));
+        if ($type === '') {
+            continue;
+        }
+
+        $systems[] = [
+            'type'         => $type,
+            'label'        => trim((string) ($item['label'] ?? '')) ?: ($defaults[$type] ?? $type),
+            'enabled'      => array_key_exists('enabled', $item) ? (bool) $item['enabled'] : true,
+            'displayOrder' => (int) ($item['displayOrder'] ?? 0),
+        ];
+    }
+
+    usort($systems, function ($a, $b) {
+        $order = ((int) ($a['displayOrder'] ?? 0)) <=> ((int) ($b['displayOrder'] ?? 0));
+        if ($order !== 0) {
+            return $order;
+        }
+
+        return strcmp((string) ($a['type'] ?? ''), (string) ($b['type'] ?? ''));
+    });
+
+    return $systems;
+}
+
+/**
+ * Carrega sistemas de torneio da API com fallback local.
+ *
+ * @param ArenaGamer_api $api
+ * @return array<int,array<string,mixed>>
+ */
+function arenagamer_resolve_tournament_systems($api, $publicOnly = false)
+{
+    if (!is_object($api)) {
+        return arenagamer_tournament_systems_default();
+    }
+
+    $method = $publicOnly ? 'get_public_tournament_systems' : 'get_tournament_systems';
+    if (!method_exists($api, $method)) {
+        return arenagamer_tournament_systems_default();
+    }
+
+    $response = $api->$method();
+    $systems = arenagamer_tournament_systems_normalize(arenagamer_api_data($response));
+
+    if (empty($systems)) {
+        return arenagamer_tournament_systems_default();
+    }
+
+    if ($publicOnly) {
+        $systems = array_values(array_filter($systems, function ($system) {
+            return !empty($system['enabled']);
+        }));
+    }
+
+    return !empty($systems) ? $systems : arenagamer_tournament_systems_default();
+}
+
+/**
+ * Rótulos mesclando API e catálogo local.
+ *
+ * @return array<string,string>
+ */
+function arenagamer_tournament_type_labels_from_systems(array $systems)
+{
+    $defaults = arenagamer_tournament_type_labels();
+    $labels = [];
+
+    foreach ($systems as $system) {
+        if (!is_array($system)) {
+            continue;
+        }
+
+        $type = strtoupper(trim((string) ($system['type'] ?? '')));
+        if ($type === '') {
+            continue;
+        }
+
+        $labels[$type] = trim((string) ($system['label'] ?? '')) ?: ($defaults[$type] ?? $type);
+    }
+
+    foreach ($defaults as $type => $label) {
+        if (!isset($labels[$type])) {
+            $labels[$type] = $label;
+        }
+    }
+
+    return $labels;
+}
+
+/**
+ * Tipos disponíveis no formulário (habilitados + tipo atual em edição).
+ *
+ * @return array<int,string>
+ */
+function arenagamer_tournament_type_options_for_form(array $systems, $currentType = null)
+{
+    $currentType = strtoupper(trim((string) $currentType));
+    $options = [];
+
+    foreach ($systems as $system) {
+        if (!is_array($system)) {
+            continue;
+        }
+
+        $type = strtoupper(trim((string) ($system['type'] ?? '')));
+        if ($type === '') {
+            continue;
+        }
+
+        if (!empty($system['enabled']) || ($currentType !== '' && $type === $currentType)) {
+            $options[] = $type;
+        }
+    }
+
+    if (empty($options)) {
+        return arenagamer_tournament_type_options();
+    }
+
+    return array_values(array_unique($options));
+}
+
+/**
+ * Valida se o tipo pode ser usado em criação ou alteração de torneio.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_system_type($type, array $systems, $existingType = null)
+{
+    $type = strtoupper(trim((string) $type));
+    $existingType = strtoupper(trim((string) $existingType));
+
+    if ($type === '') {
+        return 'Selecione um modo de torneio.';
+    }
+
+    if ($existingType !== '' && $type === $existingType) {
+        return null;
+    }
+
+    foreach ($systems as $system) {
+        if (!is_array($system)) {
+            continue;
+        }
+
+        if (strtoupper(trim((string) ($system['type'] ?? ''))) === $type) {
+            if (!empty($system['enabled'])) {
+                return null;
+            }
+
+            return 'O modo de torneio selecionado está desabilitado e não pode ser usado em novos torneios.';
+        }
+    }
+
+    $labels = arenagamer_tournament_type_labels();
+
+    if (!isset($labels[$type])) {
+        return 'Modo de torneio inválido.';
+    }
+
+    return 'O modo de torneio selecionado está desabilitado e não pode ser usado em novos torneios.';
+}
+
+/**
+ * Monta payload PUT para atualização em lote dos sistemas.
+ *
+ * @return array{systems:array<int,array{type:string,enabled:bool}>}
+ */
+function arenagamer_tournament_systems_payload_from_input($input, array $knownSystems = [])
+{
+    if (empty($knownSystems)) {
+        $knownSystems = arenagamer_tournament_systems_default();
+    }
+
+    $systems = [];
+
+    foreach ($knownSystems as $system) {
+        if (!is_array($system)) {
+            continue;
+        }
+
+        $type = strtoupper(trim((string) ($system['type'] ?? '')));
+        if ($type === '') {
+            continue;
+        }
+
+        $systems[] = [
+            'type'    => $type,
+            'enabled' => $input->post('tournament_system_' . $type) === '1',
+        ];
+    }
+
+    return ['systems' => $systems];
+}
+
+/**
+ * Preenche dados do formulário de torneio com sistemas habilitados.
+ *
+ * @param array<string,mixed> $data
+ * @return array<int,array<string,mixed>>
+ */
+function arenagamer_assign_tournament_form_systems(array &$data, $api, $publicOnly = true)
+{
+    $systems = arenagamer_resolve_tournament_systems($api, $publicOnly);
+    $currentType = (string) ($data['tournament']['type'] ?? '');
+
+    $data['tournament_systems'] = $systems;
+    $data['tournament_type_options'] = arenagamer_tournament_type_options_for_form($systems, $currentType);
+    $data['tournament_type_labels'] = arenagamer_tournament_type_labels_from_systems($systems);
+
+    return $systems;
+}
+
 function arenagamer_tournament_type_label($type)
 {
     $labels = arenagamer_tournament_type_labels();
 
     return $labels[$type] ?? htmlspecialchars((string) $type);
+}
+
+/**
+ * Descrição de cada modo de torneio (texto explicativo para a UI).
+ *
+ * @return array<string,array{icon:string,description:string,tip:?string}>
+ */
+function arenagamer_tournament_type_how_it_works_catalog()
+{
+    return [
+        'SINGLE_ELIMINATION' => [
+            'icon'        => 'fa-sitemap',
+            'description' => 'Eliminação simples — sistema de chaves em que cada derrota elimina o participante. '
+                . 'Os confrontos seguem rodada a rodada até a final, com disputa de 3º lugar.',
+            'tip' => 'Limite de participantes: 4, 8, 16, 32…',
+        ],
+        'DOUBLE_ELIMINATION' => [
+            'icon'        => 'fa-code-fork',
+            'description' => 'Eliminação dupla — chave superior (mata-mata principal) e repescagem (segunda chance). '
+                . 'Quem perde na superior cai para a repescagem; quem perde na repescagem sai. '
+                . 'Campeão de cada chave disputa a grande final. '
+                . 'Registre os resultados e use Avançar rodada alternando repescagem e superior '
+                . '(a chave superior só avança da 2ª rodada em diante depois da repescagem anterior).',
+            'tip' => 'Limite de participantes: 4, 8, 16, 32…',
+        ],
+        'ROUND_ROBIN' => [
+            'icon'        => 'fa-refresh',
+            'description' => 'Pontos corridos — todos jogam contra todos em uma única fase. '
+                . 'A classificação é por pontos (empate vale 1 ponto para cada lado) e o campeão é o 1º da tabela.',
+            'tip' => null,
+        ],
+        'ROUND_ROBIN_ELIMINATION' => [
+            'icon'        => 'fa-list-ol',
+            'description' => 'Pontos corridos + eliminatória — começa com todos contra todos (empate = 1 ponto) '
+                . 'e depois os melhores colocados seguem para um mata-mata com disputa de 3º lugar e final.',
+            'tip' => 'Classificados para o mata-mata: 2, 4, 8, 16…',
+        ],
+        'GROUP_STAGE' => [
+            'icon'        => 'fa-th-large',
+            'description' => 'Fase de grupos — os inscritos são divididos em grupos de 4 que jogam entre si. '
+                . 'Os 2 melhores de cada grupo avançam para chave eliminatória; vagas extras podem ser preenchidas pelos melhores 3ºs.',
+            'tip' => 'O total de inscritos deve ser múltiplo de 4 (ex.: 4, 8, 12, 16 inscritos).',
+        ],
+        'SWISS' => [
+            'icon'        => 'fa-random',
+            'description' => 'Sistema suíço — várias rodadas com emparelhamento por desempenho. '
+                . 'Vitória vale 3 pontos, derrota 0, sem empate. Rodada 1 por seed; depois, quem tem pontuação parecida se enfrenta. '
+                . 'Com número ímpar, o último colocado recebe bye (+3 pts).',
+            'tip' => 'O número de rodadas é calculado automaticamente conforme a quantidade de participantes.',
+        ],
+    ];
+}
+
+/**
+ * Dados do painel "Como funciona" para um tipo de torneio.
+ *
+ * @return array{title:string,icon:string,description:string,tip:?string,extra:?string}
+ */
+function arenagamer_tournament_type_how_it_works($type, array $context = [])
+{
+    $type = strtoupper(trim((string) $type));
+    $catalog = arenagamer_tournament_type_how_it_works_catalog();
+    $entry = $catalog[$type] ?? null;
+
+    if ($entry === null) {
+        return [
+            'title'       => arenagamer_tournament_type_label($type),
+            'icon'        => 'fa-info-circle',
+            'description' => 'Selecione um modo de torneio para ver como funciona.',
+            'tip'         => null,
+            'extra'       => null,
+        ];
+    }
+
+    $result = [
+        'title'       => arenagamer_tournament_type_label($type),
+        'icon'        => (string) ($entry['icon'] ?? 'fa-info-circle'),
+        'description' => (string) ($entry['description'] ?? ''),
+        'tip'         => $entry['tip'] ?? null,
+        'extra'       => null,
+    ];
+
+    $participantsLimit = (int) ($context['participantsLimit'] ?? 0);
+    $isTeam = ($context['format'] ?? '') === 'TEAM';
+
+    if ($type === 'SWISS' && $participantsLimit >= 2) {
+        $result['extra'] = arenagamer_swiss_rounds_count_label($participantsLimit, $isTeam);
+    }
+
+    if ($type === 'DOUBLE_ELIMINATION' && $participantsLimit >= 2) {
+        $result['extra'] = arenagamer_double_elimination_rounds_summary($participantsLimit, $isTeam);
+    }
+
+    if ($type === 'ROUND_ROBIN_ELIMINATION') {
+        $advance = (int) ($context['advanceToKnockout'] ?? 0);
+        if ($advance >= 2 && $participantsLimit > $advance) {
+            $result['extra'] = $advance . ' classificam para o mata-mata (de ' . $participantsLimit . ' inscritos).';
+        }
+    }
+
+    if ($type === 'GROUP_STAGE') {
+        $unit = $isTeam ? 'equipes' : 'participantes';
+        $extra = arenagamer_group_stage_teams_per_group() . ' ' . $unit . ' por grupo, '
+            . arenagamer_group_stage_advance_per_group() . ' classificam por grupo para o mata-mata.';
+        $groupsCount = arenagamer_group_stage_groups_count_from_participants($participantsLimit);
+        if ($groupsCount > 0) {
+            $extra .= ' → ' . arenagamer_group_stage_groups_count_label($groupsCount);
+        }
+        $result['extra'] = $extra;
+    }
+
+    return $result;
+}
+
+/**
+ * Painel "Como funciona" para o detalhe do torneio.
+ *
+ * @return array{title:string,icon:string,description:string,tip:?string,extra:?string}|null
+ */
+function arenagamer_tournament_how_it_works_for_detail(array $tournament)
+{
+    $type = $tournament['type'] ?? '';
+    if ($type === '') {
+        return null;
+    }
+
+    $context = [
+        'format'            => $tournament['format'] ?? 'SOLO',
+        'participantsLimit' => (int) ($tournament['participantsLimit'] ?? 0),
+        'advanceToKnockout' => (int) ($tournament['advanceToKnockout'] ?? 0),
+    ];
+
+    $participantCount = (int) ($tournament['participantCount'] ?? 0);
+    if ($participantCount >= 2) {
+        $context['participantsLimit'] = $participantCount;
+    }
+
+    $info = arenagamer_tournament_type_how_it_works($type, $context);
+
+    if ($type === 'SWISS' && $context['participantsLimit'] >= 2) {
+        $info['extra'] = arenagamer_swiss_rounds_count_label(
+            $context['participantsLimit'],
+            ($tournament['format'] ?? '') === 'TEAM'
+        );
+    }
+
+    if ($type === 'DOUBLE_ELIMINATION' && $context['participantsLimit'] >= 2) {
+        $info['extra'] = arenagamer_double_elimination_rounds_summary(
+            $context['participantsLimit'],
+            ($tournament['format'] ?? '') === 'TEAM'
+        );
+    }
+
+    return $info;
 }
 
 function arenagamer_tournament_format_labels()
@@ -246,7 +663,7 @@ function arenagamer_tournament_list_sort()
 }
 
 /**
- * Torneio cancelado não pode ser editado.
+ * Torneio cancelado ou concluído não pode ser editado.
  */
 function arenagamer_tournament_is_editable($tournament)
 {
@@ -254,12 +671,14 @@ function arenagamer_tournament_is_editable($tournament)
         return false;
     }
 
-    return strtoupper(trim((string) ($tournament['status'] ?? ''))) !== 'CANCELLED';
+    $status = strtoupper(trim((string) ($tournament['status'] ?? '')));
+
+    return !in_array($status, ['CANCELLED', 'COMPLETED'], true);
 }
 
 function arenagamer_tournament_not_editable_message()
 {
-    return 'Torneios cancelados não podem ser editados.';
+    return 'Torneios concluídos ou cancelados não podem ser editados.';
 }
 
 /**
@@ -324,8 +743,7 @@ function arenagamer_validate_tournament_format_locked_fields(array $existing, ar
     $intChecks = [
         'minPlayersPerTeam' => $existing['minPlayersPerTeam'] ?? null,
         'maxPlayersPerTeam' => $existing['maxPlayersPerTeam'] ?? null,
-        'groupsCount'       => $existing['groupsCount'] ?? null,
-        'advancePerGroup'   => $existing['advancePerGroup'] ?? null,
+        'advanceToKnockout' => $existing['advanceToKnockout'] ?? null,
     ];
 
     foreach ($intChecks as $field => $current) {
@@ -353,7 +771,7 @@ function arenagamer_strip_locked_tournament_format_fields(array &$payload, array
         return;
     }
 
-    foreach (['type', 'format', 'minPlayersPerTeam', 'maxPlayersPerTeam', 'groupsCount', 'advancePerGroup'] as $field) {
+    foreach (['type', 'format', 'minPlayersPerTeam', 'maxPlayersPerTeam', 'advanceToKnockout'] as $field) {
         unset($payload[$field]);
     }
 }
@@ -393,22 +811,1996 @@ function arenagamer_format_date($date, $format = 'd/m/Y H:i')
 }
 
 /**
+ * Tipos de rodada considerados mata-mata (eliminatória).
+ */
+function arenagamer_knockout_round_types()
+{
+    return [
+        'FINAL',
+        'SEMIFINAL',
+        'QUARTERFINAL',
+        'ROUND_OF_16',
+        'ROUND_OF_32',
+        'OITAVAS',
+        'SEMI_FINAL',
+        'KNOCKOUT',
+        'THIRD_PLACE',
+        'FOURTH_PLACE',
+        'FIFTH_PLACE',
+        'GRAND_FINAL',
+        'WINNERS_BRACKET',
+        'LOSERS_BRACKET',
+    ];
+}
+
+/**
+ * Indica se a partida pertence ao mata-mata.
+ */
+function arenagamer_is_knockout_match(array $match)
+{
+    return in_array(arenagamer_match_round_type($match), arenagamer_knockout_round_types(), true);
+}
+
+/**
+ * Rótulo legível da fase eliminatória.
+ */
+function arenagamer_knockout_round_label($roundType, $phaseLabel = null, $roundNumber = null)
+{
+    if ($phaseLabel !== null && trim((string) $phaseLabel) !== '') {
+        return trim((string) $phaseLabel);
+    }
+
+    $key = strtoupper(trim((string) $roundType));
+    $roundNumber = (int) $roundNumber;
+
+    if ($key === 'LOSERS_BRACKET' && $roundNumber > 0) {
+        return 'Repescagem — Rodada ' . $roundNumber;
+    }
+
+    if ($key === 'WINNERS_BRACKET' && $roundNumber > 0) {
+        return 'Chave superior — Rodada ' . $roundNumber;
+    }
+
+    $labels = [
+        'ROUND_OF_32'  => '32 avos de final',
+        'ROUND_OF_16'  => 'Oitavas de final',
+        'OITAVAS'      => 'Oitavas de final',
+        'QUARTERFINAL' => 'Quartas de final',
+        'SEMIFINAL'    => 'Semifinal',
+        'SEMI_FINAL'   => 'Semifinal',
+        'FINAL'        => 'Final',
+        'THIRD_PLACE'  => 'Disputa de 3º lugar',
+        'FOURTH_PLACE' => 'Disputa de 4º lugar',
+        'FIFTH_PLACE'  => 'Disputa de 5º lugar',
+        'GRAND_FINAL'  => 'Grande final',
+        'KNOCKOUT'     => 'Mata-mata',
+        'WINNERS_BRACKET' => 'Chave superior',
+        'LOSERS_BRACKET'  => 'Repescagem',
+    ];
+
+    return $labels[$key] ?? ($key !== '' ? ucfirst(strtolower(str_replace('_', ' ', $key))) : 'Rodada');
+}
+
+/**
+ * Faixa visual da posição na classificação dos grupos.
+ *
+ * @return string|null gold|silver|bronze|green
+ */
+function arenagamer_position_tier($position)
+{
+    switch ((int) $position) {
+        case 1:
+            return 'gold';
+        case 2:
+            return 'silver';
+        case 3:
+            return 'bronze';
+        case 4:
+        case 5:
+            return 'green';
+        default:
+            return null;
+    }
+}
+
+/**
+ * Classe CSS da borda lateral conforme a colocação.
+ */
+function arenagamer_participant_tier_class($tier)
+{
+    $tier = trim((string) $tier);
+    if ($tier === '') {
+        return '';
+    }
+
+    return ' ag-participant--tier-' . preg_replace('/[^a-z0-9-]/', '', $tier);
+}
+
+/**
+ * Indica se o torneio deve exibir tabela de classificação (em andamento ou concluído).
+ */
+function arenagamer_tournament_shows_classification(array $tournament)
+{
+    $status = strtoupper(trim((string) ($tournament['status'] ?? '')));
+
+    return in_array($status, ['IN_PROGRESS', 'COMPLETED'], true);
+}
+
+/**
+ * Título da seção de inscritos/classificação conforme o status do torneio.
+ */
+function arenagamer_tournament_standings_section_title(array $tournament)
+{
+    return arenagamer_tournament_shows_classification($tournament) ? 'Classificação' : 'Participantes';
+}
+
+/**
+ * Mapa participantId → posição/tier (classificação da fase de grupos).
+ *
+ * @return array<int,array{position:int,groupNumber:int,tier:?string,rankLabel:string,note:string}>
+ */
+function arenagamer_build_participant_standing_map($standings)
+{
+    $map = [];
+
+    if (!is_array($standings)) {
+        return $map;
+    }
+
+    foreach ($standings as $row) {
+        if (!is_array($row) || empty($row['participantId'])) {
+            continue;
+        }
+
+        $position = (int) ($row['position'] ?? 0);
+        $map[(int) $row['participantId']] = [
+            'position'    => $position,
+            'groupNumber' => (int) ($row['groupNumber'] ?? 0),
+            'tier'        => arenagamer_position_tier($position),
+            'rankLabel'   => $position > 0 ? $position . 'º' : '',
+            'note'        => trim((string) ($row['note'] ?? '')),
+        ];
+    }
+
+    return $map;
+}
+
+/**
+ * Lista de melhores colocados na fase de grupos (1º ao Nº), para legenda da chave.
+ *
+ * @return array<int,array{participantId:int,participantName:string,position:int,groupNumber:int,tier:?string,rankLabel:string}>
+ */
+function arenagamer_build_top_standings_list($standings, $maxPosition = 5)
+{
+    $items = [];
+
+    if (!is_array($standings)) {
+        return $items;
+    }
+
+    foreach ($standings as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $position = (int) ($row['position'] ?? 0);
+        if ($position < 1 || $position > (int) $maxPosition) {
+            continue;
+        }
+
+        $name = trim((string) ($row['participantName'] ?? ''));
+        if ($name === '' && !empty($row['participantId'])) {
+            $name = 'Participante #' . (int) $row['participantId'];
+        }
+
+        $items[] = [
+            'participantId'   => (int) ($row['participantId'] ?? 0),
+            'participantName' => $name,
+            'position'        => $position,
+            'groupNumber'     => (int) ($row['groupNumber'] ?? 0),
+            'tier'            => arenagamer_position_tier($position),
+            'rankLabel'       => $position . 'º',
+        ];
+    }
+
+    usort($items, function ($a, $b) {
+        $byPosition = $a['position'] <=> $b['position'];
+        if ($byPosition !== 0) {
+            return $byPosition;
+        }
+
+        $byGroup = $a['groupNumber'] <=> $b['groupNumber'];
+        if ($byGroup !== 0) {
+            return $byGroup;
+        }
+
+        return strcasecmp($a['participantName'], $b['participantName']);
+    });
+
+    return $items;
+}
+
+/**
+ * Top 3 final do torneio — exibido somente após status COMPLETED.
+ *
+ * @return array<int,array{participantId:int,participantName:string,position:int,tier:?string,rankLabel:string}>
+ */
+function arenagamer_build_final_top3_list($standings, $tournamentStatus = '', $matches = [])
+{
+    if (strtoupper(trim((string) $tournamentStatus)) !== 'COMPLETED') {
+        return [];
+    }
+
+    $byPosition = [];
+
+    if (is_array($matches)) {
+        foreach ($matches as $match) {
+            if (!is_array($match) || !arenagamer_is_knockout_match($match)) {
+                continue;
+            }
+            if (!arenagamer_is_knockout_placement_match($match)) {
+                continue;
+            }
+
+            foreach (['home', 'away'] as $side) {
+                $position = arenagamer_knockout_side_tournament_placement($match, $side);
+                if ($position < 1 || $position > 3) {
+                    continue;
+                }
+
+                $id = (int) ($match[$side === 'home' ? 'homeParticipantId' : 'awayParticipantId'] ?? 0);
+                $name = trim((string) ($match[$side === 'home' ? 'homeParticipantName' : 'awayParticipantName'] ?? ''));
+                if ($name === '' && $id > 0) {
+                    $name = 'Participante #' . $id;
+                }
+                if ($name === '') {
+                    continue;
+                }
+
+                $byPosition[$position] = [
+                    'participantId'   => $id,
+                    'participantName' => $name,
+                    'position'        => $position,
+                    'tier'            => arenagamer_position_tier($position),
+                    'rankLabel'       => $position . 'º',
+                ];
+            }
+        }
+    }
+
+    if (empty($byPosition) && is_array($standings)) {
+        foreach ($standings as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            if ((int) ($row['groupNumber'] ?? 0) > 0) {
+                continue;
+            }
+
+            $position = (int) ($row['position'] ?? 0);
+            if ($position < 1 || $position > 3 || isset($byPosition[$position])) {
+                continue;
+            }
+
+            $name = trim((string) ($row['participantName'] ?? ''));
+            if ($name === '' && !empty($row['participantId'])) {
+                $name = 'Participante #' . (int) $row['participantId'];
+            }
+            if ($name === '') {
+                continue;
+            }
+
+            $byPosition[$position] = [
+                'participantId'   => (int) ($row['participantId'] ?? 0),
+                'participantName' => $name,
+                'position'        => $position,
+                'tier'            => arenagamer_position_tier($position),
+                'rankLabel'       => $position . 'º',
+            ];
+        }
+    }
+
+    if (empty($byPosition)) {
+        return [];
+    }
+
+    ksort($byPosition);
+
+    return array_values($byPosition);
+}
+
+/**
+ * Posição na fase de grupos informada pela API na partida (lado home/away).
+ */
+function arenagamer_match_side_group_position(array $match, $side)
+{
+    $prefix = $side === 'home' ? 'home' : 'away';
+    $keys = [
+        $prefix . 'GroupPosition',
+        $prefix . 'GroupRank',
+        $prefix . 'OriginPosition',
+        $prefix . 'Position',
+    ];
+
+    foreach ($keys as $key) {
+        if (!isset($match[$key]) || $match[$key] === '' || $match[$key] === null) {
+            continue;
+        }
+        $position = (int) $match[$key];
+        if ($position > 0 && $position <= 8) {
+            return $position;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Posições finais disputadas numa partida eliminatória (ex.: Final → 1º e 2º).
+ *
+ * @return array{0:int,1:int}|null [posição vencedor, posição perdedor] ou null se não for disputa de colocação
+ */
+function arenagamer_knockout_placement_slots(array $match)
+{
+    $roundType = strtoupper(trim((string) ($match['roundType'] ?? '')));
+    $phase = mb_strtolower(trim((string) ($match['phaseLabel'] ?? '')));
+
+    switch ($roundType) {
+        case 'FINAL':
+            return [1, 2];
+        case 'THIRD_PLACE':
+            return [3, 4];
+        case 'FOURTH_PLACE':
+            return [4, 5];
+        case 'FIFTH_PLACE':
+            return [5, 6];
+    }
+
+    if ($phase !== '') {
+        if (preg_match('/\b(3[\sº°o]|terceir[\w]*)\s*(lugar|coloca)/u', $phase)) {
+            return [3, 4];
+        }
+        if (preg_match('/\b(4[\sº°o]|quart[\w]*)\s*(lugar|coloca)/u', $phase)) {
+            return [4, 5];
+        }
+        if (preg_match('/\b(5[\sº°o]|quint[\w]*)\s*(lugar|coloca)/u', $phase)) {
+            return [5, 6];
+        }
+        if (preg_match('/\b(1[\sº°o]|primeir[\w]*)\s*(lugar|coloca)/u', $phase)
+            && strpos($phase, 'semi') === false
+            && strpos($phase, '11') === false
+            && strpos($phase, '21') === false) {
+            return [1, 2];
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Indica se a partida eliminatória define colocação final (1º–5º).
+ */
+function arenagamer_is_knockout_placement_match(array $match)
+{
+    $slots = arenagamer_knockout_placement_slots($match);
+    if ($slots === null) {
+        return false;
+    }
+
+    return $slots[0] >= 1 && $slots[0] <= 5;
+}
+
+/**
+ * Colocação final do participante na chave eliminatória (somente após resultado).
+ */
+function arenagamer_knockout_side_tournament_placement(array $match, $side)
+{
+    $slots = arenagamer_knockout_placement_slots($match);
+    if ($slots === null || $slots[0] > 5) {
+        return 0;
+    }
+
+    if (!in_array($match['status'] ?? '', ['COMPLETED', 'WALKOVER'], true)) {
+        return 0;
+    }
+
+    $isHome = $side === 'home';
+    $winnerId = $match['winnerParticipantId'] ?? null;
+    $participantId = $match[$isHome ? 'homeParticipantId' : 'awayParticipantId'] ?? null;
+
+    if ($winnerId === null || $winnerId === '' || $participantId === null || $participantId === '') {
+        return 0;
+    }
+
+    $isWinner = (string) $winnerId === (string) $participantId;
+    $position = $isWinner ? (int) $slots[0] : (int) $slots[1];
+
+    return ($position >= 1 && $position <= 5) ? $position : 0;
+}
+
+/**
+ * Badge HTML de posição (canto superior direito dos quadradinhos da chave).
+ */
+function arenagamer_render_participant_rank_badge(array $participant)
+{
+    $label = trim((string) ($participant['rankLabel'] ?? ''));
+    $tier = trim((string) ($participant['tier'] ?? ''));
+
+    if ($label === '' || $tier === '') {
+        return '';
+    }
+
+    $tierClass = htmlspecialchars(preg_replace('/[^a-z0-9-]/', '', $tier));
+    $title = trim((string) ($participant['rankTitle'] ?? ''));
+    if ($title === '') {
+        $title = 'Colocação na fase de grupos';
+    }
+
+    return '<span class="ag-rank-badge ag-rank-badge--' . $tierClass . '" title="' . htmlspecialchars($title) . '">'
+        . htmlspecialchars($label) . '</span>';
+}
+
+/**
+ * Dados de exibição de um participante na chave.
+ *
+ * @param array $options context: 'group' (padrão) | 'knockout'
+ */
+function arenagamer_bracket_participant_row(array $match, $side, array $standingMap = [], array $options = [])
+{
+    $isHome = $side === 'home';
+    $id = $match[$isHome ? 'homeParticipantId' : 'awayParticipantId'] ?? null;
+    $name = trim((string) ($match[$isHome ? 'homeParticipantName' : 'awayParticipantName'] ?? ''));
+    $score = $match[$isHome ? 'homeScore' : 'awayScore'] ?? null;
+    $winnerId = $match['winnerParticipantId'] ?? null;
+    $empty = ($name === '' && ($id === null || $id === ''));
+    $context = (string) ($options['context'] ?? 'group');
+
+    if ($name === '' && !$empty) {
+        $name = 'Participante #' . (int) $id;
+    } elseif ($empty) {
+        $name = 'A definir';
+    }
+
+    $isWinner = !$empty && !empty($winnerId) && (string) $winnerId === (string) $id;
+    $isFinished = in_array($match['status'] ?? '', ['COMPLETED', 'WALKOVER'], true);
+
+    $rankTitle = 'Colocação na fase de grupos';
+    $position = 0;
+    $isPlacementMatch = arenagamer_is_knockout_placement_match($match);
+    $useKnockoutPlacement = $context === 'knockout' || $isPlacementMatch;
+
+    if ($useKnockoutPlacement) {
+        $position = arenagamer_knockout_side_tournament_placement($match, $side);
+        $rankTitle = 'Colocação final no torneio';
+    } elseif ($isFinished) {
+        $position = arenagamer_match_side_group_position($match, $side);
+    }
+
+    $tier = arenagamer_position_tier($position);
+    $rankLabel = ($position >= 1 && $position <= 5) ? ($position . 'º') : '';
+
+    return [
+        'label'     => $name,
+        'empty'     => $empty,
+        'winner'    => $isWinner,
+        'score'     => ($score !== null && $score !== '') ? (int) $score : null,
+        'finished'  => $isFinished,
+        'position'  => $position,
+        'tier'      => $tier,
+        'rankLabel' => $rankLabel,
+        'rankTitle' => $rankTitle,
+        'tierClass' => arenagamer_participant_tier_class($tier),
+    ];
+}
+
+/**
+ * Monta colunas da chave eliminatória (oitavas → quartas → semi → final).
+ *
+ * @return array{rounds:array<int,array{label:string,roundType:string,roundNumber:int,matches:array}>,third_place:?array}
+ */
+function arenagamer_build_knockout_bracket($matches)
+{
+    $result = [
+        'rounds'      => [],
+        'third_place' => null,
+    ];
+
+    if (!is_array($matches) || empty($matches)) {
+        return $result;
+    }
+
+    $byRound = [];
+
+    foreach ($matches as $match) {
+        if (!is_array($match) || !arenagamer_is_knockout_match($match)) {
+            continue;
+        }
+
+        if (($match['roundType'] ?? '') === 'THIRD_PLACE') {
+            $result['third_place'] = $match;
+            continue;
+        }
+
+        $roundNumber = (int) ($match['roundNumber'] ?? 0);
+        if ($roundNumber < 1) {
+            $roundNumber = 999;
+        }
+
+        $byRound[$roundNumber][] = $match;
+    }
+
+    if (empty($byRound)) {
+        return $result;
+    }
+
+    ksort($byRound);
+
+    foreach ($byRound as $roundNumber => $roundMatches) {
+        usort($roundMatches, function ($a, $b) {
+            return ((int) ($a['matchNumber'] ?? 0)) <=> ((int) ($b['matchNumber'] ?? 0));
+        });
+
+        $first = $roundMatches[0];
+        $roundType = (string) ($first['roundType'] ?? '');
+
+        $result['rounds'][] = [
+            'label'       => arenagamer_knockout_round_label($roundType, $first['phaseLabel'] ?? null, $roundNumber),
+            'roundType'   => $roundType,
+            'roundNumber' => (int) $roundNumber,
+            'matches'     => $roundMatches,
+        ];
+    }
+
+    return $result;
+}
+
+/**
+ * Indica se o tipo de torneio é eliminação dupla.
+ */
+function arenagamer_is_double_elimination_tournament_type($type)
+{
+    return strtoupper(trim((string) $type)) === 'DOUBLE_ELIMINATION';
+}
+
+/**
+ * Lado da chave em torneio de eliminação dupla.
+ *
+ * @return string|null WINNERS|LOSERS|GRAND_FINAL
+ */
+function arenagamer_match_bracket_side(array $match)
+{
+    $roundType = arenagamer_match_round_type($match);
+
+    if ($roundType === 'GRAND_FINAL') {
+        return 'GRAND_FINAL';
+    }
+
+    if ($roundType === 'LOSERS_BRACKET') {
+        return 'LOSERS';
+    }
+
+    if ($roundType === 'WINNERS_BRACKET') {
+        return 'WINNERS';
+    }
+
+    $groupNumber = (int) ($match['groupNumber'] ?? 0);
+    if ($groupNumber === 2) {
+        return 'LOSERS';
+    }
+    if ($groupNumber === 1) {
+        return 'WINNERS';
+    }
+
+    $raw = $match['bracketSide'] ?? $match['bracket_side'] ?? '';
+    $side = strtoupper(trim((string) $raw));
+
+    if (in_array($side, ['WINNERS', 'WINNER', 'UPPER', 'SUPERIOR'], true)) {
+        return 'WINNERS';
+    }
+
+    if (in_array($side, ['LOSERS', 'LOSER', 'LOWER', 'INFERIOR', 'REPESCAGEM'], true)) {
+        return 'LOSERS';
+    }
+
+    if ($side === 'GRAND_FINAL') {
+        return 'GRAND_FINAL';
+    }
+
+    return null;
+}
+
+/**
+ * Indica se a partida exige registro de resultado (dois inscritos definidos).
+ */
+function arenagamer_match_requires_result(array $match)
+{
+    $homeId = $match['homeParticipantId'] ?? null;
+    $awayId = $match['awayParticipantId'] ?? null;
+
+    return !empty($homeId) && !empty($awayId);
+}
+
+/**
+ * Indica se a partida pertence à estrutura de eliminação dupla.
+ */
+function arenagamer_is_double_elimination_phase_match(array $match)
+{
+    if (in_array(arenagamer_match_round_type($match), ['WINNERS_BRACKET', 'LOSERS_BRACKET', 'GRAND_FINAL'], true)) {
+        return true;
+    }
+
+    $side = arenagamer_match_bracket_side($match);
+
+    return $side !== null || arenagamer_is_knockout_match($match);
+}
+
+/**
+ * Rodadas da chave superior em eliminação dupla: ceil(log₂ N).
+ */
+function arenagamer_double_elimination_superior_rounds($participantCount)
+{
+    return (int) max(1, (int) ceil(log(max(2, (int) $participantCount), 2)));
+}
+
+/**
+ * Resumo de rodadas da eliminação dupla.
+ */
+function arenagamer_double_elimination_rounds_summary($participantCount, $isTeam = false)
+{
+    $count = max(2, (int) $participantCount);
+    $superiorRounds = arenagamer_double_elimination_superior_rounds($count);
+    $inferiorRounds = 2 * max(0, $superiorRounds - 1);
+    $unit = $isTeam ? 'equipes' : 'participantes';
+
+    return $count . ' ' . $unit
+        . ' → superior ' . $superiorRounds . ' rodada' . ($superiorRounds === 1 ? '' : 's')
+        . ', repescagem ' . $inferiorRounds
+        . ', grande final';
+}
+
+/**
+ * Monta chaves superior, repescagem e grande final.
+ *
+ * @return array{winners:array,losers:array,grand_final:?array,has_brackets:bool}
+ */
+function arenagamer_build_double_elimination_brackets($matches)
+{
+    $result = [
+        'winners'       => ['rounds' => [], 'third_place' => null],
+        'losers'        => ['rounds' => [], 'third_place' => null],
+        'grand_final'   => null,
+        'has_brackets'  => false,
+    ];
+
+    if (!is_array($matches) || empty($matches)) {
+        return $result;
+    }
+
+    $winnersMatches = [];
+    $losersMatches = [];
+
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+
+        $side = arenagamer_match_bracket_side($match);
+
+        if ($side === 'GRAND_FINAL') {
+            $result['grand_final'] = $match;
+            continue;
+        }
+
+        if ($side === 'WINNERS') {
+            $winnersMatches[] = $match;
+            continue;
+        }
+
+        if ($side === 'LOSERS') {
+            $losersMatches[] = $match;
+            continue;
+        }
+
+        if (arenagamer_is_knockout_match($match)) {
+            $winnersMatches[] = $match;
+        }
+    }
+
+    $result['winners'] = arenagamer_build_knockout_bracket($winnersMatches);
+    $result['losers'] = arenagamer_build_knockout_bracket(
+        arenagamer_filter_linked_knockout_matches($losersMatches, $matches)
+    );
+    $result['has_brackets'] = !empty($result['winners']['rounds'])
+        || !empty($result['losers']['rounds'])
+        || !empty($result['grand_final']);
+
+    return $result;
+}
+
+/**
+ * Indica se a eliminação dupla pode ser finalizada (grande final concluída e demais jogos decididos).
+ */
+function arenagamer_double_elimination_can_finalize($matchesData)
+{
+    if (!is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    $finished = ['COMPLETED', 'WALKOVER'];
+    $grandFinalComplete = false;
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || !arenagamer_is_double_elimination_phase_match($match)) {
+            continue;
+        }
+
+        $homeId = $match['homeParticipantId'] ?? null;
+        $awayId = $match['awayParticipantId'] ?? null;
+
+        if (empty($homeId) && empty($awayId)) {
+            continue;
+        }
+
+        if (!in_array($match['status'] ?? '', $finished, true)) {
+            return false;
+        }
+
+        if (arenagamer_match_bracket_side($match) === 'GRAND_FINAL') {
+            $grandFinalComplete = true;
+        }
+    }
+
+    return $grandFinalComplete;
+}
+
+/**
+ * IDs de partidas ligadas após o resultado (vitória ou derrota).
+ *
+ * @return array<int,int>
+ */
+function arenagamer_match_advance_link_ids(array $match)
+{
+    $ids = [];
+
+    foreach (['nextMatchId', 'next_match_id'] as $field) {
+        $id = (int) ($match[$field] ?? 0);
+        if ($id > 0) {
+            $ids[] = $id;
+        }
+    }
+
+    foreach (['loserNextMatchId', 'loser_next_match_id'] as $field) {
+        $id = (int) ($match[$field] ?? 0);
+        if ($id > 0) {
+            $ids[] = $id;
+        }
+    }
+
+    return array_values(array_unique($ids));
+}
+
+/**
+ * Indica se ainda há jogos em disputa em uma chave da eliminação dupla.
+ */
+function arenagamer_double_elimination_side_has_pending_results(array $matchesData, $bracketSide)
+{
+    $bracketSide = strtoupper(trim((string) $bracketSide));
+    $finished = ['COMPLETED', 'WALKOVER'];
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || !arenagamer_is_double_elimination_phase_match($match)) {
+            continue;
+        }
+        if (arenagamer_match_bracket_side($match) !== $bracketSide) {
+            continue;
+        }
+        if (!arenagamer_match_requires_result($match)) {
+            continue;
+        }
+        if (!in_array($match['status'] ?? '', $finished, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Indica se todos os jogos disputáveis de uma rodada/chave foram concluídos.
+ */
+function arenagamer_double_elimination_side_round_is_complete(array $matchesData, $bracketSide, $roundNumber)
+{
+    $bracketSide = strtoupper(trim((string) $bracketSide));
+    $roundNumber = (int) $roundNumber;
+    $finished = ['COMPLETED', 'WALKOVER'];
+    $hasPlayable = false;
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || arenagamer_match_bracket_side($match) !== $bracketSide) {
+            continue;
+        }
+        if ((int) ($match['roundNumber'] ?? 0) !== $roundNumber) {
+            continue;
+        }
+        if (!arenagamer_match_requires_result($match)) {
+            continue;
+        }
+        $hasPlayable = true;
+        if (!in_array($match['status'] ?? '', $finished, true)) {
+            return false;
+        }
+    }
+
+    return $hasPlayable;
+}
+
+/**
+ * Indica se ainda há jogos em disputa na eliminação dupla (qualquer chave).
+ */
+function arenagamer_double_elimination_has_pending_results(array $matchesData)
+{
+    foreach (['WINNERS', 'LOSERS'] as $side) {
+        if (arenagamer_double_elimination_side_has_pending_results($matchesData, $side)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Agrupa partidas de uma chave da eliminação dupla por número de rodada.
+ *
+ * @return array<int,array<int,array>>
+ */
+function arenagamer_double_elimination_side_rounds_map(array $matchesData, $bracketSide)
+{
+    $bracketSide = strtoupper(trim((string) $bracketSide));
+    $rounds = [];
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || arenagamer_match_bracket_side($match) !== $bracketSide) {
+            continue;
+        }
+
+        $roundNumber = $match['roundNumber'] ?? null;
+        if ($roundNumber === null) {
+            continue;
+        }
+
+        $rounds[(int) $roundNumber][] = $match;
+    }
+
+    ksort($rounds);
+
+    return $rounds;
+}
+
+/**
+ * Indica se a repescagem já avançou da rodada informada (vencedores na rodada seguinte).
+ */
+function arenagamer_double_elimination_losers_round_has_been_advanced(array $matchesData, $roundNumber)
+{
+    $roundNumber = (int) $roundNumber;
+    if ($roundNumber < 1) {
+        return false;
+    }
+
+    if (!arenagamer_double_elimination_side_round_is_complete($matchesData, 'LOSERS', $roundNumber)) {
+        return false;
+    }
+
+    $rounds = arenagamer_double_elimination_side_rounds_map($matchesData, 'LOSERS');
+    $nextRound = $roundNumber + 1;
+
+    if (!isset($rounds[$nextRound])) {
+        return false;
+    }
+
+    foreach ($rounds[$nextRound] as $match) {
+        if (!empty($match['homeParticipantId']) || !empty($match['awayParticipantId'])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Chave superior (rodada 2+): só pode avançar após a repescagem anterior ter sido avançada.
+ */
+function arenagamer_double_elimination_winners_round_may_advance(array $matchesData, $roundNumber)
+{
+    $roundNumber = (int) $roundNumber;
+
+    if ($roundNumber <= 1) {
+        return true;
+    }
+
+    return arenagamer_double_elimination_losers_round_has_been_advanced($matchesData, $roundNumber - 1);
+}
+
+/**
+ * Remove partidas vazias sem links de avanço (fantasmas de bracket cheio).
+ *
+ * @return array<int,array>
+ */
+function arenagamer_filter_linked_knockout_matches(array $matches, array $allMatches = [])
+{
+    if (empty($matches)) {
+        return [];
+    }
+
+    $pool = !empty($allMatches) ? $allMatches : $matches;
+    $linkedTargets = [];
+
+    foreach ($pool as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        foreach (arenagamer_match_advance_link_ids($match) as $targetId) {
+            $linkedTargets[(int) $targetId] = true;
+        }
+    }
+
+    $filtered = [];
+
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+
+        if (!empty($match['homeParticipantId']) || !empty($match['awayParticipantId'])) {
+            $filtered[] = $match;
+            continue;
+        }
+
+        $matchId = (int) ($match['id'] ?? 0);
+        if ($matchId > 0 && !empty($linkedTargets[$matchId])) {
+            $filtered[] = $match;
+        }
+    }
+
+    return $filtered;
+}
+
+/**
+ * Indica se há resultados registrados aguardando advance-round (links com vagas abertas).
+ */
+function arenagamer_double_elimination_has_pending_advance_links(array $matchesData)
+{
+    $finished = ['COMPLETED', 'WALKOVER'];
+    $byId = [];
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || empty($match['id']) || !arenagamer_is_double_elimination_phase_match($match)) {
+            continue;
+        }
+        $byId[(int) $match['id']] = $match;
+    }
+
+    if (empty($byId)) {
+        return false;
+    }
+
+    foreach ($byId as $match) {
+        if (!in_array($match['status'] ?? '', $finished, true)) {
+            continue;
+        }
+
+        $side = arenagamer_match_bracket_side($match);
+        $roundNumber = (int) ($match['roundNumber'] ?? 0);
+        if ($side !== null && $roundNumber > 0
+            && !arenagamer_double_elimination_side_round_is_complete($matchesData, $side, $roundNumber)) {
+            continue;
+        }
+
+        if ($side === 'WINNERS' && $roundNumber >= 2
+            && !arenagamer_double_elimination_winners_round_may_advance($matchesData, $roundNumber)) {
+            continue;
+        }
+
+        foreach (arenagamer_match_advance_link_ids($match) as $targetId) {
+            if (!isset($byId[$targetId])) {
+                continue;
+            }
+
+            $target = $byId[$targetId];
+            if (empty($target['homeParticipantId']) || empty($target['awayParticipantId'])) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Verifica avanço por rodada dentro de uma chave (superior ou repescagem).
+ */
+function arenagamer_double_elimination_bracket_side_can_advance_round(array $matchesData, $bracketSide)
+{
+    $bracketSide = strtoupper(trim((string) $bracketSide));
+    if (!in_array($bracketSide, ['WINNERS', 'LOSERS'], true)) {
+        return false;
+    }
+
+    $rounds = [];
+    $finished = ['COMPLETED', 'WALKOVER'];
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || arenagamer_match_bracket_side($match) !== $bracketSide) {
+            continue;
+        }
+
+        $roundNumber = $match['roundNumber'] ?? null;
+        if ($roundNumber === null) {
+            continue;
+        }
+
+        $rounds[(int) $roundNumber][] = $match;
+    }
+
+    if (empty($rounds)) {
+        return false;
+    }
+
+    ksort($rounds);
+
+    foreach (array_keys($rounds) as $roundNumber) {
+        $populated = false;
+        $allFinished = true;
+
+        foreach ($rounds[$roundNumber] as $match) {
+            if (!empty($match['homeParticipantId']) || !empty($match['awayParticipantId'])) {
+                $populated = true;
+            }
+            if (arenagamer_match_requires_result($match)
+                && !in_array($match['status'] ?? '', $finished, true)) {
+                $allFinished = false;
+            }
+        }
+
+        if (!$populated || !$allFinished) {
+            continue;
+        }
+
+        if ($bracketSide === 'WINNERS' && $roundNumber >= 2
+            && !arenagamer_double_elimination_winners_round_may_advance($matchesData, $roundNumber)) {
+            continue;
+        }
+
+        $nextRound = $roundNumber + 1;
+        if (!isset($rounds[$nextRound])) {
+            continue;
+        }
+
+        foreach ($rounds[$nextRound] as $nextMatch) {
+            if (!empty($nextMatch['homeParticipantId']) || !empty($nextMatch['awayParticipantId'])) {
+                continue 2;
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Indica se a próxima rodada da eliminação dupla pode ser gerada (advance-round).
+ *
+ * Repescagem tem prioridade; chave superior (rodada 2+) exige repescagem anterior avançada.
+ */
+function arenagamer_double_elimination_matches_can_advance_round($matchesData)
+{
+    if (!is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    if (arenagamer_double_elimination_bracket_side_can_advance_round($matchesData, 'LOSERS')) {
+        return true;
+    }
+
+    if (arenagamer_double_elimination_has_pending_advance_links($matchesData)) {
+        return true;
+    }
+
+    if (arenagamer_double_elimination_side_has_pending_results($matchesData, 'WINNERS')) {
+        return false;
+    }
+
+    if (arenagamer_double_elimination_bracket_side_can_advance_round($matchesData, 'WINNERS')) {
+        return true;
+    }
+
+    if (arenagamer_double_elimination_side_has_pending_results($matchesData, 'LOSERS')) {
+        return false;
+    }
+
+    return arenagamer_double_elimination_bracket_side_can_advance_round($matchesData, 'LOSERS');
+}
+
+/**
+ * Dica antes de gerar chaves em torneio de eliminação dupla.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_bracket_double_elimination_hint(array $tournament)
+{
+    if (!arenagamer_is_double_elimination_tournament_type($tournament['type'] ?? '')) {
+        return null;
+    }
+
+    $participants = max(2, (int) ($tournament['participantCount'] ?? $tournament['participantsLimit'] ?? 0));
+    $isTeam = ($tournament['format'] ?? '') === 'TEAM';
+    $summary = arenagamer_double_elimination_rounds_summary($participants, $isTeam);
+
+    return $summary . '. Apenas a 1ª rodada da superior vem preenchida (BYEs automáticos quando necessário); '
+        . 'a repescagem é proporcional aos jogos reais da 1ª rodada. '
+        . 'Registre os resultados e use Avançar rodada: primeiro envie perdedores à repescagem, '
+        . 'jogue e avance a repescagem, depois avance a chave superior — alternando as duas chaves. '
+        . 'Se as chaves ficaram incorretas, apague as partidas e gere as chaves novamente.';
+}
+
+/**
+ * roundType normalizado (camelCase ou snake_case da API).
+ */
+function arenagamer_match_round_type(array $match)
+{
+    $raw = $match['roundType'] ?? $match['round_type'] ?? '';
+
+    return strtoupper(trim((string) $raw));
+}
+
+/**
+ * Indica se a partida é da fase de grupos.
+ */
+function arenagamer_is_group_stage_match(array $match)
+{
+    return arenagamer_match_round_type($match) === 'GROUP_STAGE';
+}
+
+/**
+ * Indica se a partida é da fase de pontos corridos (todos contra todos).
+ */
+function arenagamer_is_round_robin_match(array $match)
+{
+    return arenagamer_match_round_type($match) === 'ROUND_ROBIN';
+}
+
+/**
+ * Indica se o tipo de torneio é sistema suíço.
+ */
+function arenagamer_is_swiss_tournament_type($type)
+{
+    return strtoupper(trim((string) $type)) === 'SWISS';
+}
+
+/**
+ * Indica se a partida pertence a uma rodada suíça.
+ */
+function arenagamer_is_swiss_match(array $match)
+{
+    return arenagamer_match_round_type($match) === 'SWISS';
+}
+
+/**
+ * Partida da fase suíça (inclui fallback quando a API não envia roundType).
+ */
+function arenagamer_is_swiss_phase_match(array $match)
+{
+    if (arenagamer_is_swiss_match($match)) {
+        return true;
+    }
+
+    if (arenagamer_is_knockout_match($match)
+        || arenagamer_is_group_stage_match($match)
+        || arenagamer_is_round_robin_match($match)) {
+        return false;
+    }
+
+    $roundType = arenagamer_match_round_type($match);
+
+    return $roundType === '';
+}
+
+/**
+ * Participantes efetivos para calcular rodadas suíças.
+ */
+function arenagamer_swiss_participant_count(array $tournament)
+{
+    $count = (int) ($tournament['participantCount'] ?? 0);
+    if ($count >= 2) {
+        return $count;
+    }
+
+    if (!empty($tournament['participants']) && is_array($tournament['participants'])) {
+        $count = count($tournament['participants']);
+        if ($count >= 2) {
+            return $count;
+        }
+    }
+
+    return max(2, (int) ($tournament['participantsLimit'] ?? 0));
+}
+
+/**
+ * Total de rodadas suíças: ceil(log₂ participantes).
+ */
+function arenagamer_swiss_total_rounds($participantCount)
+{
+    $count = max(2, (int) $participantCount);
+
+    return (int) max(1, (int) ceil(log($count, 2)));
+}
+
+/**
+ * Total de rodadas suíças para um torneio.
+ */
+function arenagamer_swiss_total_rounds_for_tournament(array $tournament)
+{
+    return arenagamer_swiss_total_rounds(arenagamer_swiss_participant_count($tournament));
+}
+
+/**
+ * Extrai partidas suíças ordenadas por rodada e número do jogo.
+ *
+ * @return array<int,array>
+ */
+function arenagamer_collect_swiss_matches(array $allMatches)
+{
+    $matches = [];
+
+    foreach ($allMatches as $match) {
+        if (is_array($match) && arenagamer_is_swiss_phase_match($match)) {
+            $matches[] = $match;
+        }
+    }
+
+    usort($matches, function ($a, $b) {
+        $roundOrder = (int) ($a['roundNumber'] ?? 0) <=> (int) ($b['roundNumber'] ?? 0);
+        if ($roundOrder !== 0) {
+            return $roundOrder;
+        }
+
+        return ((int) ($a['matchNumber'] ?? 0)) <=> ((int) ($b['matchNumber'] ?? 0));
+    });
+
+    return $matches;
+}
+
+/**
+ * Agrupa partidas suíças por rodada.
+ *
+ * @return array<int,array{roundNumber:int,label:string,matches:array}>
+ */
+function arenagamer_build_swiss_round_blocks(array $matches)
+{
+    $byRound = [];
+
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        $roundNumber = (int) ($match['roundNumber'] ?? 0);
+        if ($roundNumber < 1) {
+            $roundNumber = 1;
+        }
+        $byRound[$roundNumber][] = $match;
+    }
+
+    if (empty($byRound)) {
+        return [];
+    }
+
+    ksort($byRound);
+
+    $blocks = [];
+    foreach ($byRound as $roundNumber => $roundMatches) {
+        usort($roundMatches, function ($a, $b) {
+            return ((int) ($a['matchNumber'] ?? 0)) <=> ((int) ($b['matchNumber'] ?? 0));
+        });
+
+        $blocks[] = [
+            'roundNumber' => (int) $roundNumber,
+            'label'       => 'Rodada ' . (int) $roundNumber,
+            'matches'     => $roundMatches,
+        ];
+    }
+
+    return $blocks;
+}
+
+/**
+ * Indica se a partida suíça já foi resolvida (inclui bye automático).
+ */
+function arenagamer_swiss_match_is_resolved(array $match)
+{
+    $homeId = $match['homeParticipantId'] ?? null;
+    $awayId = $match['awayParticipantId'] ?? null;
+
+    if (empty($homeId) && empty($awayId)) {
+        return true;
+    }
+
+    return in_array($match['status'] ?? '', ['COMPLETED', 'WALKOVER'], true);
+}
+
+/**
+ * Indica se todos os jogos de uma rodada suíça foram concluídos.
+ */
+function arenagamer_swiss_round_is_complete(array $roundMatches)
+{
+    if (empty($roundMatches)) {
+        return false;
+    }
+
+    foreach ($roundMatches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        $homeId = $match['homeParticipantId'] ?? null;
+        $awayId = $match['awayParticipantId'] ?? null;
+
+        if (empty($homeId) && empty($awayId)) {
+            continue;
+        }
+
+        if (!arenagamer_swiss_match_is_resolved($match)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Indica se a rodada suíça já tem emparelhamentos definidos.
+ */
+function arenagamer_swiss_round_has_pairings(array $roundMatches)
+{
+    foreach ($roundMatches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        if (!empty($match['homeParticipantId']) || !empty($match['awayParticipantId'])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Agrupa partidas suíças por número de rodada.
+ *
+ * @return array<int,array<int,array>>
+ */
+function arenagamer_swiss_matches_by_round($matchesData)
+{
+    $rounds = [];
+
+    if (!is_array($matchesData)) {
+        return $rounds;
+    }
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || !arenagamer_is_swiss_phase_match($match)) {
+            continue;
+        }
+        $roundNumber = (int) ($match['roundNumber'] ?? 0);
+        if ($roundNumber < 1) {
+            $roundNumber = 1;
+        }
+        $rounds[$roundNumber][] = $match;
+    }
+
+    ksort($rounds);
+
+    return $rounds;
+}
+
+/**
+ * Indica se a próxima rodada suíça pode ser gerada.
+ */
+function arenagamer_swiss_matches_can_advance_round($matchesData, array $tournament)
+{
+    if (!is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    $rounds = arenagamer_swiss_matches_by_round($matchesData);
+    if (empty($rounds)) {
+        return false;
+    }
+
+    $totalRounds = arenagamer_swiss_total_rounds_for_tournament($tournament);
+    $currentRound = max(array_keys($rounds));
+
+    if (!arenagamer_swiss_round_is_complete($rounds[$currentRound])) {
+        return false;
+    }
+
+    if ($currentRound >= $totalRounds) {
+        return false;
+    }
+
+    $nextRound = $currentRound + 1;
+
+    if (isset($rounds[$nextRound]) && arenagamer_swiss_round_has_pairings($rounds[$nextRound])) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Indica se o torneio suíço pode ser finalizado.
+ */
+function arenagamer_swiss_matches_can_finalize($matchesData, array $tournament)
+{
+    if (!is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    $rounds = arenagamer_swiss_matches_by_round($matchesData);
+    if (empty($rounds)) {
+        return false;
+    }
+
+    $totalRounds = arenagamer_swiss_total_rounds_for_tournament($tournament);
+    $maxRound = max(array_keys($rounds));
+
+    if ($maxRound < $totalRounds) {
+        return false;
+    }
+
+    foreach ($matchesData as $match) {
+        if (!is_array($match) || !arenagamer_is_swiss_phase_match($match)) {
+            continue;
+        }
+        if (!arenagamer_swiss_match_is_resolved($match)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Texto "N participantes → X rodadas" para torneio suíço.
+ */
+function arenagamer_swiss_rounds_count_label($participantCount, $isTeam = false)
+{
+    $count = max(2, (int) $participantCount);
+    $rounds = arenagamer_swiss_total_rounds($count);
+    $unit = $isTeam ? 'equipes' : 'participantes';
+
+    return $count . ' ' . $unit . ' → ' . $rounds . ' rodada' . ($rounds === 1 ? '' : 's');
+}
+
+/**
+ * Resumo do formato suíço para exibição no detalhe do torneio.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_swiss_summary(array $tournament)
+{
+    if (!arenagamer_is_swiss_tournament_type($tournament['type'] ?? '')) {
+        return null;
+    }
+
+    $participants = arenagamer_swiss_participant_count($tournament);
+    $isTeam = ($tournament['format'] ?? '') === 'TEAM';
+    $roundsLabel = arenagamer_swiss_rounds_count_label($participants, $isTeam);
+
+    return $roundsLabel . ' · vitória 3 pts · derrota 0 · sem empate';
+}
+
+/**
+ * Dica antes de gerar chaves em torneio suíço.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_bracket_swiss_hint(array $tournament)
+{
+    if (!arenagamer_is_swiss_tournament_type($tournament['type'] ?? '')) {
+        return null;
+    }
+
+    $participants = arenagamer_swiss_participant_count($tournament);
+    $isTeam = ($tournament['format'] ?? '') === 'TEAM';
+    $roundsLabel = arenagamer_swiss_rounds_count_label($participants, $isTeam);
+
+    return $roundsLabel . '. Será criada a rodada 1 com emparelhamento por seed (estilo suíço clássico).';
+}
+
+/**
+ * Mensagem de confirmação ao gerar a próxima rodada suíça.
+ */
+function arenagamer_advance_round_confirm_message(array $tournament)
+{
+    if (arenagamer_is_swiss_tournament_type($tournament['type'] ?? '')) {
+        return 'Gerar a próxima rodada suíça com emparelhamento por pontuação similar (evitando repetir adversários quando possível)?';
+    }
+
+    if (arenagamer_is_double_elimination_tournament_type($tournament['type'] ?? '')) {
+        return 'Avançar a próxima rodada? '
+            . 'Perdedores da superior vão para a repescagem; vencedores da repescagem seguem na repescagem. '
+            . 'A chave superior só avança da 2ª rodada em diante depois que a repescagem anterior foi avançada.';
+    }
+
+    return 'Gerar a próxima fase com os vencedores da fase atual?';
+}
+
+/**
+ * Rótulo do botão advance-round conforme o tipo de torneio.
+ */
+function arenagamer_advance_round_button_label(array $tournament)
+{
+    if (arenagamer_is_swiss_tournament_type($tournament['type'] ?? '')) {
+        return 'Gerar próxima rodada';
+    }
+
+    if (arenagamer_is_double_elimination_tournament_type($tournament['type'] ?? '')) {
+        return 'Avançar rodada';
+    }
+
+    return 'Gerar próxima fase';
+}
+
+/**
+ * Torneios com fase inicial em tabela seguida de mata-mata.
+ */
+function arenagamer_tournament_has_league_knockout_flow($tournamentType)
+{
+    return in_array(strtoupper(trim((string) $tournamentType)), ['GROUP_STAGE', 'ROUND_ROBIN_ELIMINATION'], true);
+}
+
+/**
+ * Indica se a partida pertence à fase de tabela inicial do torneio.
+ */
+function arenagamer_is_league_phase_match(array $match, $tournamentType)
+{
+    $type = strtoupper(trim((string) $tournamentType));
+
+    if ($type === 'GROUP_STAGE') {
+        return arenagamer_is_group_stage_match($match);
+    }
+
+    if ($type === 'ROUND_ROBIN_ELIMINATION') {
+        if (arenagamer_is_round_robin_match($match)) {
+            return true;
+        }
+
+        // Fallback: partidas da fase inicial ainda sem roundType explícito na API.
+        return !arenagamer_is_knockout_match($match);
+    }
+
+    return false;
+}
+
+/**
+ * Verifica se um número é potência de 2 (2, 4, 8, 16…).
+ */
+function arenagamer_is_power_of_two($value)
+{
+    $value = (int) $value;
+
+    return $value >= 2 && ($value & ($value - 1)) === 0;
+}
+
+/**
+ * Maior potência de 2 menor ou igual ao limite informado.
+ */
+function arenagamer_largest_power_of_two_up_to($limit)
+{
+    $limit = (int) $limit;
+    if ($limit < 2) {
+        return 0;
+    }
+
+    $power = 1;
+    while (($power * 2) <= $limit) {
+        $power *= 2;
+    }
+
+    return $power;
+}
+
+/**
+ * Resolve o número do grupo de uma partida.
+ */
+function arenagamer_match_group_number(array $match, array $participantGroup = [])
+{
+    if (isset($match['groupNumber']) && (int) $match['groupNumber'] > 0) {
+        return (int) $match['groupNumber'];
+    }
+
+    $phase = (string) ($match['phaseLabel'] ?? '');
+    if (preg_match('/grupo\s*(\d+)/iu', $phase, $matches)) {
+        return (int) $matches[1];
+    }
+
+    foreach (['homeParticipantId', 'awayParticipantId'] as $key) {
+        $participantId = (int) ($match[$key] ?? 0);
+        if ($participantId > 0 && isset($participantGroup[$participantId])) {
+            return (int) $participantGroup[$participantId];
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Verifica se a classificação possui grupos.
+ */
+function arenagamer_standings_has_groups($standings)
+{
+    if (!is_array($standings)) {
+        return false;
+    }
+
+    foreach ($standings as $row) {
+        if (is_array($row) && (isset($row['groupNumber']) || isset($row['points']))) {
+            return isset($row['groupNumber']);
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Monta blocos da fase de grupos (classificação + partidas por grupo).
+ *
+ * @return array<int,array{number:int,standings:array,matches:array}>
+ */
+function arenagamer_build_group_stage_blocks($standings, $matches)
+{
+    $blocks = [];
+    $participantGroup = [];
+
+    if (!is_array($standings)) {
+        $standings = [];
+    }
+    if (!is_array($matches)) {
+        $matches = [];
+    }
+
+    foreach ($standings as $row) {
+        if (!is_array($row) || !isset($row['groupNumber'])) {
+            continue;
+        }
+        $groupNumber = (int) $row['groupNumber'];
+        if ($groupNumber < 1) {
+            continue;
+        }
+        if (isset($row['participantId'])) {
+            $participantGroup[(int) $row['participantId']] = $groupNumber;
+        }
+        if (!isset($blocks[$groupNumber])) {
+            $blocks[$groupNumber] = [
+                'number'    => $groupNumber,
+                'standings' => [],
+                'matches'   => [],
+            ];
+        }
+        $blocks[$groupNumber]['standings'][] = $row;
+    }
+
+    foreach ($matches as $match) {
+        if (!is_array($match) || !arenagamer_is_group_stage_match($match)) {
+            continue;
+        }
+        $groupNumber = arenagamer_match_group_number($match, $participantGroup);
+        if ($groupNumber < 1) {
+            continue;
+        }
+        if (!isset($blocks[$groupNumber])) {
+            $blocks[$groupNumber] = [
+                'number'    => $groupNumber,
+                'standings' => [],
+                'matches'   => [],
+            ];
+        }
+        $blocks[$groupNumber]['matches'][] = $match;
+    }
+
+    ksort($blocks);
+
+    foreach ($blocks as &$block) {
+        usort($block['standings'], function ($a, $b) {
+            return ((int) ($a['position'] ?? 999)) <=> ((int) ($b['position'] ?? 999));
+        });
+        usort($block['matches'], function ($a, $b) {
+            return ((int) ($a['matchNumber'] ?? 0)) <=> ((int) ($b['matchNumber'] ?? 0));
+        });
+    }
+    unset($block);
+
+    return array_values($blocks);
+}
+
+/**
+ * Busca todas as partidas de um torneio (paginação da API).
+ *
+ * @param ArenaGamer_api $api
+ */
+function arenagamer_fetch_all_tournament_matches($api, $slug, $pageSize = 100, $maxPages = 50)
+{
+    $all = [];
+    $page = 0;
+
+    do {
+        $response = $api->get_tournament_matches($slug, [
+            'page' => $page,
+            'size' => $pageSize,
+        ]);
+        $content = arenagamer_paginated_content($response);
+        if (!is_array($content) || empty($content)) {
+            break;
+        }
+
+        $all = array_merge($all, $content);
+        $meta = arenagamer_pagination_meta($response);
+        $page++;
+
+        if ($page >= (int) ($meta['totalPages'] ?? 1)) {
+            break;
+        }
+    } while ($page < $maxPages);
+
+    return $all;
+}
+
+/**
+ * Tamanho da página na listagem de jogos de pontos corridos.
+ */
+function arenagamer_round_robin_matches_page_size()
+{
+    return 10;
+}
+
+/**
+ * Extrai e ordena partidas da fase de pontos corridos.
+ */
+function arenagamer_collect_round_robin_matches(array $allMatches)
+{
+    $matches = [];
+
+    foreach ($allMatches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        if (arenagamer_is_round_robin_match($match) || !arenagamer_is_knockout_match($match)) {
+            $matches[] = $match;
+        }
+    }
+
+    usort($matches, function ($a, $b) {
+        return ((int) ($a['matchNumber'] ?? 0)) <=> ((int) ($b['matchNumber'] ?? 0));
+    });
+
+    return $matches;
+}
+
+/**
+ * Pagina um array local (metadados compatíveis com arenagamer_pagination_info_text).
+ *
+ * @return array{items:array,pagination:array}
+ */
+function arenagamer_paginate_array(array $items, $page, $size)
+{
+    $total = count($items);
+    $size = max(1, (int) $size);
+    $totalPages = (int) max(1, (int) ceil($total / $size));
+    $page = min(max(0, (int) $page), $totalPages - 1);
+    $offset = $page * $size;
+    $from = $total > 0 ? $offset + 1 : 0;
+    $to = min($offset + $size, $total);
+
+    return [
+        'items'      => array_slice($items, $offset, $size),
+        'pagination' => [
+            'number'        => $page,
+            'size'          => $size,
+            'totalElements' => $total,
+            'totalPages'    => $totalPages,
+            'from'          => $from,
+            'to'            => $to,
+        ],
+    ];
+}
+
+/**
+ * Query string do detalhe do torneio (filtros de partidas + pontos corridos).
+ */
+function arenagamer_tournament_detail_query(array $overrides = [])
+{
+    $CI = &get_instance();
+    $params = [];
+
+    foreach (['match_page', 'match_view', 'rr_page'] as $key) {
+        if (array_key_exists($key, $overrides)) {
+            $value = $overrides[$key];
+            if ($value === null || $value === '') {
+                continue;
+            }
+            if ($key === 'match_view' && $value === 'pending') {
+                continue;
+            }
+            if (in_array($key, ['match_page', 'rr_page'], true) && (int) $value <= 0) {
+                continue;
+            }
+            $params[$key] = $value;
+            continue;
+        }
+
+        $value = $CI->input->get($key);
+        if ($value === null || $value === '') {
+            continue;
+        }
+        if ($key === 'match_view' && $value === 'pending') {
+            continue;
+        }
+        if (in_array($key, ['match_page', 'rr_page'], true) && (int) $value <= 0) {
+            continue;
+        }
+        $params[$key] = $value;
+    }
+
+    return $params;
+}
+
+/**
+ * URL do detalhe do torneio preservando filtros ativos.
+ */
+function arenagamer_tournament_detail_url($baseUrl, array $overrides = [])
+{
+    $params = arenagamer_tournament_detail_query($overrides);
+    $query = http_build_query($params);
+
+    return rtrim((string) $baseUrl, '?') . ($query !== '' ? '?' . $query : '');
+}
+
+/**
+ * Página atual dos jogos de pontos corridos (query rr_page).
+ */
+function arenagamer_round_robin_matches_page_from_request()
+{
+    $CI = &get_instance();
+
+    return max(0, (int) ($CI->input->get('rr_page') ?? 0));
+}
+
+/**
+ * Estado da listagem de partidas (filtros da API + visão ativa na UI).
+ *
+ * @return array{filters:array,view:string}
+ */
+function arenagamer_tournament_matches_list_query($input)
+{
+    $filters = [
+        'page' => max(0, (int) ($input->get('match_page') ?? 0)),
+        'size' => max(1, min(100, (int) ($input->get('match_size') ?? 10))),
+    ];
+
+    $view = strtolower(trim((string) $input->get('match_view')));
+
+    if ($view === '') {
+        $finished = $input->get('match_finished');
+        if ($finished === 'true' || $finished === '1') {
+            $view = 'finished';
+        } elseif ($finished === 'false' || $finished === '0') {
+            $view = 'pending';
+        } else {
+            $scheduled = $input->get('match_scheduled');
+            if ($scheduled === 'false' || $scheduled === '0') {
+                $view = 'unscheduled';
+            } elseif ($scheduled === 'true' || $scheduled === '1') {
+                $view = 'scheduled';
+            } else {
+                $view = 'pending';
+            }
+        }
+    }
+
+    switch ($view) {
+        case 'all':
+            break;
+        case 'finished':
+            $filters['finished'] = true;
+            break;
+        case 'pending':
+            $filters['finished'] = false;
+            break;
+        case 'unscheduled':
+            $filters['scheduled'] = false;
+            break;
+        case 'scheduled':
+            $filters['scheduled'] = true;
+            break;
+        default:
+            $view = 'pending';
+            $filters['finished'] = false;
+            break;
+    }
+
+    return [
+        'filters' => $filters,
+        'view'    => $view,
+    ];
+}
+
+/**
+ * Filtros de listagem de partidas a partir da query string.
+ */
+function arenagamer_tournament_matches_filters_from_request($input)
+{
+    return arenagamer_tournament_matches_list_query($input)['filters'];
+}
+
+/**
+ * Monta URL de detalhe do torneio preservando filtro de partidas.
+ */
+function arenagamer_tournament_matches_filter_url($baseUrl, $view, $page = 0)
+{
+    $params = [];
+
+    if ($page > 0) {
+        $params['match_page'] = (int) $page;
+    }
+
+    if ($view !== 'pending') {
+        $params['match_view'] = $view;
+    }
+
+    $query = http_build_query($params);
+
+    return rtrim((string) $baseUrl, '?') . ($query !== '' ? '?' . $query : '');
+}
+
+/**
+ * Opções de filtro rápido para a listagem de partidas.
+ */
+function arenagamer_tournament_matches_filter_options()
+{
+    return [
+        ['id' => 'pending', 'label' => 'Pendentes'],
+        ['id' => 'scheduled', 'label' => 'Agendadas'],
+        ['id' => 'all', 'label' => 'Todas'],
+        ['id' => 'finished', 'label' => 'Finalizadas'],
+        ['id' => 'unscheduled', 'label' => 'Sem horário'],
+    ];
+}
+
+/**
  * Indica se é possível gerar a próxima fase da chave eliminatória:
  * todos os jogos da fase atual concluídos e existe uma próxima fase ainda não preenchida.
  */
-function arenagamer_matches_can_advance_round($matchesData, $tournamentType)
+function arenagamer_matches_can_advance_round($matchesData, $tournamentType, array $tournament = [])
 {
-    if (!in_array($tournamentType, ['SINGLE_ELIMINATION', 'GROUP_STAGE'], true)
+    $tournamentType = strtoupper(trim((string) $tournamentType));
+
+    if ($tournamentType === 'SWISS') {
+        return arenagamer_swiss_matches_can_advance_round($matchesData, $tournament);
+    }
+
+    if ($tournamentType === 'DOUBLE_ELIMINATION') {
+        return arenagamer_double_elimination_matches_can_advance_round($matchesData);
+    }
+
+    if (!in_array($tournamentType, ['SINGLE_ELIMINATION', 'GROUP_STAGE', 'ROUND_ROBIN_ELIMINATION'], true)
         || !is_array($matchesData) || empty($matchesData)) {
         return false;
     }
 
-    // Na fase de grupos, só faz sentido avançar dentro do mata-mata (após ele existir)
-    if ($tournamentType === 'GROUP_STAGE' && !arenagamer_matches_has_knockout($matchesData)) {
+    if (arenagamer_tournament_has_league_knockout_flow($tournamentType)
+        && !arenagamer_matches_has_knockout($matchesData)) {
         return false;
     }
-
-    $knockoutTypes = ['FINAL', 'SEMIFINAL', 'QUARTERFINAL', 'KNOCKOUT', 'THIRD_PLACE'];
 
     $rounds = [];
     foreach ($matchesData as $m) {
@@ -416,8 +2808,8 @@ function arenagamer_matches_can_advance_round($matchesData, $tournamentType)
         if ($rn === null) {
             continue;
         }
-        // No mata-mata da fase de grupos, ignora as rodadas de grupo
-        if ($tournamentType === 'GROUP_STAGE' && !in_array($m['roundType'] ?? '', $knockoutTypes, true)) {
+        if (arenagamer_tournament_has_league_knockout_flow($tournamentType)
+            && arenagamer_is_league_phase_match($m, $tournamentType)) {
             continue;
         }
         $rounds[(int) $rn][] = $m;
@@ -476,10 +2868,8 @@ function arenagamer_matches_has_knockout($matchesData)
         return false;
     }
 
-    $knockoutTypes = ['FINAL', 'SEMIFINAL', 'QUARTERFINAL', 'KNOCKOUT', 'THIRD_PLACE'];
-
     foreach ($matchesData as $m) {
-        if (in_array($m['roundType'] ?? '', $knockoutTypes, true)) {
+        if (arenagamer_is_knockout_match($m)) {
             return true;
         }
     }
@@ -488,12 +2878,40 @@ function arenagamer_matches_has_knockout($matchesData)
 }
 
 /**
- * Indica se o mata-mata da fase de grupos pode ser gerado:
- * tipo fase de grupos, todos os jogos de grupo concluídos e mata-mata ainda não gerado.
+ * Verifica se todos os jogos da fase de tabela inicial foram concluídos.
+ */
+function arenagamer_matches_league_phase_complete($matchesData, $tournamentType)
+{
+    if (!arenagamer_tournament_has_league_knockout_flow($tournamentType)
+        || !is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    $finished = ['COMPLETED', 'WALKOVER'];
+    $hasLeagueMatch = false;
+
+    foreach ($matchesData as $m) {
+        if (!arenagamer_is_league_phase_match($m, $tournamentType)) {
+            continue;
+        }
+        $hasLeagueMatch = true;
+        if (!in_array($m['status'] ?? '', $finished, true)) {
+            return false;
+        }
+    }
+
+    return $hasLeagueMatch;
+}
+
+/**
+ * Indica se o mata-mata pode ser gerado após a fase de tabela inicial.
  */
 function arenagamer_matches_can_generate_knockout($matchesData, $tournamentType)
 {
-    if ($tournamentType !== 'GROUP_STAGE' || !is_array($matchesData) || empty($matchesData)) {
+    $tournamentType = strtoupper(trim((string) $tournamentType));
+
+    if (!arenagamer_tournament_has_league_knockout_flow($tournamentType)
+        || !is_array($matchesData) || empty($matchesData)) {
         return false;
     }
 
@@ -501,30 +2919,126 @@ function arenagamer_matches_can_generate_knockout($matchesData, $tournamentType)
         return false;
     }
 
-    $finished = ['COMPLETED', 'WALKOVER'];
-    $hasGroupMatch = false;
+    return arenagamer_matches_league_phase_complete($matchesData, $tournamentType);
+}
 
-    foreach ($matchesData as $m) {
-        if (($m['roundType'] ?? '') !== 'GROUP_STAGE') {
-            continue;
-        }
-        $hasGroupMatch = true;
-        if (!in_array($m['status'] ?? '', $finished, true)) {
-            return false;
-        }
+/**
+ * Indica se as chaves iniciais podem ser geradas.
+ */
+function arenagamer_tournament_can_generate_bracket(array $tournament, $matchesData = null)
+{
+    $status = strtoupper(trim((string) ($tournament['status'] ?? '')));
+    $matches = is_array($matchesData) ? $matchesData : [];
+
+    if (in_array($status, ['REGISTRATION_OPEN', 'REGISTRATION_CLOSED'], true)) {
+        return true;
     }
 
-    return $hasGroupMatch;
+    // Torneio em andamento sem partidas (ex.: falha na geração ou status adiantado pela API).
+    if ($status === 'IN_PROGRESS' && empty($matches)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Dica quando o mata-mata ainda não pode ser gerado (fase inicial incompleta).
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_generate_knockout_pending_hint($matchesData, $tournamentType)
+{
+    $tournamentType = strtoupper(trim((string) $tournamentType));
+
+    if (!arenagamer_tournament_has_league_knockout_flow($tournamentType)
+        || !is_array($matchesData) || empty($matchesData)) {
+        return null;
+    }
+
+    if (arenagamer_matches_can_generate_knockout($matchesData, $tournamentType)
+        || arenagamer_matches_has_knockout($matchesData)) {
+        return null;
+    }
+
+    if (!arenagamer_matches_league_phase_complete($matchesData, $tournamentType)) {
+        return 'Registre o resultado de todas as partidas da fase inicial para habilitar a geração do mata-mata.';
+    }
+
+    return null;
+}
+
+/**
+ * Indica se o mata-mata pode ser regerado (fase de tabela concluída e mata-mata já existente).
+ */
+function arenagamer_matches_can_regenerate_knockout($matchesData, $tournamentType)
+{
+    $tournamentType = strtoupper(trim((string) $tournamentType));
+
+    if (!arenagamer_tournament_has_league_knockout_flow($tournamentType)
+        || !is_array($matchesData) || empty($matchesData)) {
+        return false;
+    }
+
+    if (!arenagamer_matches_has_knockout($matchesData)) {
+        return false;
+    }
+
+    return arenagamer_matches_league_phase_complete($matchesData, $tournamentType);
+}
+
+/**
+ * Indica se as partidas da chave podem ser limpas (endpoint admin DELETE /matches).
+ */
+function arenagamer_tournament_can_clear_matches(array $tournament, $matchesData = null)
+{
+    $status = strtoupper(trim((string) ($tournament['status'] ?? '')));
+
+    if (in_array($status, ['COMPLETED', 'CANCELLED', 'DRAFT'], true)) {
+        return false;
+    }
+
+    return is_array($matchesData) && !empty($matchesData);
+}
+
+/**
+ * Mensagem de sucesso ao limpar partidas (data = quantidade removida).
+ */
+function arenagamer_clear_matches_success_message($response, $default = 'Partidas removidas com sucesso.')
+{
+    if (!arenagamer_api_is_success($response)) {
+        return $default;
+    }
+
+    $count = arenagamer_api_data($response);
+    if (is_numeric($count)) {
+        $n = (int) $count;
+
+        return $n . ' partida' . ($n === 1 ? '' : 's') . ' removida' . ($n === 1 ? '' : 's')
+            . '. O torneio voltou para inscrições fechadas — gere a chave novamente quando estiver pronto.';
+    }
+
+    return arenagamer_api_message($response, $default);
 }
 
 /**
  * Indica se o torneio pode ser finalizado: todas as posições definidas,
  * ou seja, todas as partidas concluídas. Em mata-mata/fase de grupos exige uma final concluída.
  */
-function arenagamer_matches_can_finalize($matchesData, $tournamentType = '')
+function arenagamer_matches_can_finalize($matchesData, $tournamentType = '', array $tournament = [])
 {
     if (!is_array($matchesData) || empty($matchesData)) {
         return false;
+    }
+
+    $tournamentType = strtoupper(trim((string) $tournamentType));
+
+    if ($tournamentType === 'SWISS') {
+        return arenagamer_swiss_matches_can_finalize($matchesData, $tournament);
+    }
+
+    if ($tournamentType === 'DOUBLE_ELIMINATION') {
+        return arenagamer_double_elimination_can_finalize($matchesData);
     }
 
     $finished = ['COMPLETED', 'WALKOVER'];
@@ -539,7 +3053,7 @@ function arenagamer_matches_can_finalize($matchesData, $tournamentType = '')
         }
     }
 
-    if (in_array($tournamentType, ['SINGLE_ELIMINATION', 'GROUP_STAGE'], true)) {
+    if (in_array($tournamentType, ['SINGLE_ELIMINATION', 'GROUP_STAGE', 'ROUND_ROBIN_ELIMINATION'], true)) {
         return $hasFinishedFinal;
     }
 
@@ -1732,6 +4246,61 @@ function arenagamer_plan_free_max_participants($plan)
 }
 
 /**
+ * Benefícios de participantes do plano ainda válidos (limite mensal de torneios não estourado).
+ */
+function arenagamer_plan_participant_benefits_active($plan)
+{
+    return is_array($plan) && !arenagamer_plan_tournament_limit_reached($plan);
+}
+
+/**
+ * Teto de participantes enquanto os benefícios do plano estão ativos.
+ * Acima disso só com preço padrão (após esgotar torneios inclusos no mês).
+ *
+ * @return int|null null = sem teto do plano
+ */
+function arenagamer_plan_participants_hard_limit($plan)
+{
+    if (!arenagamer_plan_participant_benefits_active($plan)) {
+        return null;
+    }
+
+    $max = arenagamer_plan_free_max_participants($plan);
+
+    return $max > 0 ? $max : null;
+}
+
+/**
+ * Valida limite de participantes conforme o plano ativo.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_participants_for_plan($plan, $participantsLimit, $tournamentType = '', $teamsPerGroup = null)
+{
+    $hardLimit = arenagamer_plan_participants_hard_limit($plan);
+    $limit = (int) $participantsLimit;
+    $typeError = arenagamer_validate_tournament_participants_count_for_type(
+        $limit,
+        $tournamentType,
+        'limite de participantes'
+    );
+    if ($typeError !== null) {
+        return $typeError;
+    }
+
+    if ($hardLimit === null) {
+        return null;
+    }
+
+    if ($limit > $hardLimit) {
+        return 'Seu plano permite no máximo ' . $hardLimit . ' participantes por torneio. '
+            . 'Reduza o limite ou aguarde o próximo período (torneios inclusos esgotados seguem o preço padrão).';
+    }
+
+    return null;
+}
+
+/**
  * Plano permite taxa de inscrição em torneios.
  */
 function arenagamer_plan_allows_entry_fee($plan)
@@ -1749,6 +4318,364 @@ function arenagamer_plan_allows_entry_fee($plan)
 function arenagamer_tournament_min_participants()
 {
     return 4;
+}
+
+/**
+ * Incremento permitido nos campos de limite/mínimo de participantes.
+ */
+function arenagamer_tournament_participants_step()
+{
+    return 2;
+}
+
+/**
+ * Participantes por grupo em torneios de fase de grupos (fixo na API).
+ */
+function arenagamer_group_stage_teams_per_group()
+{
+    return 4;
+}
+
+/**
+ * Classificados por grupo em torneios de fase de grupos (fixo na API).
+ */
+function arenagamer_group_stage_advance_per_group()
+{
+    return 2;
+}
+
+/**
+ * Quantidade de grupos a partir do total de inscritos (limite ou inscritos reais).
+ *
+ * @return int 0 se o total não for múltiplo de participantes por grupo
+ */
+function arenagamer_group_stage_groups_count_from_participants($participantsCount)
+{
+    $perGroup = arenagamer_group_stage_teams_per_group();
+    $total = (int) $participantsCount;
+
+    if ($total < $perGroup || $total % $perGroup !== 0) {
+        return 0;
+    }
+
+    return (int) ($total / $perGroup);
+}
+
+/**
+ * Número de grupos do torneio (persistido ou estimado pelo limite de inscritos).
+ */
+function arenagamer_tournament_group_stage_groups_count(array $tournament)
+{
+    $groupsCount = (int) ($tournament['groupsCount'] ?? 0);
+    if ($groupsCount > 0) {
+        return $groupsCount;
+    }
+
+    $limit = (int) ($tournament['participantsLimit'] ?? 0);
+    if ($limit > 0) {
+        return arenagamer_group_stage_groups_count_from_participants($limit);
+    }
+
+    $participantCount = (int) ($tournament['participantCount'] ?? 0);
+    if ($participantCount > 0) {
+        return arenagamer_group_stage_groups_count_from_participants($participantCount);
+    }
+
+    return 0;
+}
+
+/**
+ * Rótulo legível para a quantidade de grupos (ex.: "2 grupos").
+ */
+function arenagamer_group_stage_groups_count_label($groupsCount)
+{
+    $groupsCount = (int) $groupsCount;
+    if ($groupsCount < 1) {
+        return '';
+    }
+
+    return $groupsCount . ' grupo' . ($groupsCount === 1 ? '' : 's');
+}
+
+/**
+ * Normaliza campos de fase de grupos para os valores fixos da API.
+ */
+function arenagamer_normalize_group_stage_tournament(array &$tournament)
+{
+    if (strtoupper(trim((string) ($tournament['type'] ?? ''))) !== 'GROUP_STAGE') {
+        return;
+    }
+
+    $tournament['teamsPerGroup'] = arenagamer_group_stage_teams_per_group();
+    $tournament['advancePerGroup'] = arenagamer_group_stage_advance_per_group();
+}
+
+/**
+ * Ajusta um valor ao degrau permitido (ex.: 4, 6, 8…).
+ */
+function arenagamer_snap_tournament_participants_count($value, $max = null, $floor = null)
+{
+    $step = arenagamer_tournament_participants_step();
+    $floor = $floor !== null ? max(2, (int) $floor) : arenagamer_tournament_min_participants();
+    $value = (int) $value;
+
+    if ($value < $floor) {
+        $value = $floor;
+    }
+
+    $remainder = ($value - $floor) % $step;
+    if ($remainder !== 0) {
+        $value -= $remainder;
+        if ($value < $floor) {
+            $value = $floor;
+        }
+    }
+
+    $max = $max !== null ? (int) $max : 0;
+    if ($max > 0 && $value > $max) {
+        $value = $max - (($max - $floor) % $step);
+        if ($value < $floor) {
+            $value = $floor;
+        }
+    }
+
+    return $value;
+}
+
+/**
+ * Valida se o valor segue o degrau permitido.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_participants_step($value, $label = 'limite')
+{
+    $floor = arenagamer_tournament_min_participants();
+    $step = arenagamer_tournament_participants_step();
+    $value = (int) $value;
+
+    if ($value < $floor) {
+        return 'O ' . $label . ' deve ser pelo menos ' . $floor . '.';
+    }
+
+    if (($value - $floor) % $step !== 0) {
+        return 'O ' . $label . ' deve aumentar de ' . $step . ' em ' . $step
+            . ' (ex.: ' . $floor . ', ' . ($floor + $step) . ', ' . ($floor + ($step * 2)) . '…).';
+    }
+
+    return null;
+}
+
+/**
+ * Indica se o tipo de torneio usa chave eliminatória (potência de 2).
+ */
+function arenagamer_is_elimination_tournament_type($type)
+{
+    $type = strtoupper(trim((string) $type));
+
+    return in_array($type, ['SINGLE_ELIMINATION', 'DOUBLE_ELIMINATION'], true);
+}
+
+/**
+ * Ajusta um valor à potência de 2 mais próxima (para baixo), respeitando piso e teto.
+ */
+function arenagamer_snap_tournament_participants_power_of_two($value, $max = null, $floor = null)
+{
+    $floor = $floor !== null ? max(2, (int) $floor) : arenagamer_tournament_min_participants();
+    $value = (int) $value;
+
+    if ($value < $floor) {
+        $value = $floor;
+    }
+
+    if (!arenagamer_is_power_of_two($value)) {
+        $value = arenagamer_largest_power_of_two_up_to($value);
+        if ($value < $floor) {
+            $power = 2;
+            while ($power < $floor) {
+                $power *= 2;
+            }
+            $value = $power;
+        }
+    }
+
+    $max = $max !== null ? (int) $max : 0;
+    if ($max > 0 && $value > $max) {
+        $value = arenagamer_largest_power_of_two_up_to($max);
+        if ($value < $floor) {
+            $value = $floor;
+        }
+    }
+
+    return $value;
+}
+
+/**
+ * Valida limite/mínimo conforme o tipo de torneio (potência de 2 ou degrau fixo).
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_participants_count_for_type($value, $type, $label = 'limite de participantes')
+{
+    $floor = arenagamer_tournament_min_participants();
+    $value = (int) $value;
+
+    if ($value < $floor) {
+        return 'O ' . $label . ' deve ser pelo menos ' . $floor . '.';
+    }
+
+    if (arenagamer_is_elimination_tournament_type($type)) {
+        if (!arenagamer_is_power_of_two($value)) {
+            return 'Na eliminação, o ' . $label . ' deve ser 4, 8, 16, 32…';
+        }
+
+        return null;
+    }
+
+    if (strtoupper(trim((string) $type)) === 'GROUP_STAGE') {
+        $perGroup = arenagamer_group_stage_teams_per_group();
+        if ($value % $perGroup !== 0) {
+            return 'Na fase de grupos, o ' . $label . ' deve ser múltiplo de ' . $perGroup . ' (ex.: 4, 8, 12, 16…).';
+        }
+
+        return null;
+    }
+
+    return arenagamer_validate_tournament_participants_step($value, $label);
+}
+
+/**
+ * Opções válidas para o limite de participantes (espelha a regra do formulário).
+ *
+ * @return array<int,int>|null null = entrada livre
+ */
+function arenagamer_tournament_participant_limit_options(array $payload, $planMax = null)
+{
+    $type = strtoupper(trim((string) ($payload['type'] ?? '')));
+    $min = arenagamer_tournament_min_participants();
+    $max = $planMax !== null ? (int) $planMax : 0;
+
+    if ($type === 'GROUP_STAGE') {
+        $perGroup = arenagamer_group_stage_teams_per_group();
+        $groupMax = $max > 0 ? $max : 512;
+        $values = [];
+        for ($v = $perGroup; $v <= $groupMax; $v += $perGroup) {
+            if ($v >= $min) {
+                $values[] = $v;
+            }
+        }
+
+        return $values ?: [$perGroup];
+    }
+
+    if ($max > 0) {
+        if (in_array($type, ['SINGLE_ELIMINATION', 'DOUBLE_ELIMINATION'], true)) {
+            $values = [];
+            for ($power = 2; $power <= $max; $power *= 2) {
+                if ($power >= $min) {
+                    $values[] = $power;
+                }
+            }
+
+            return $values ?: [max($min, 2)];
+        }
+
+        $values = [];
+        for ($v = $min; $v <= $max; $v += $min) {
+            $values[] = $v;
+        }
+
+        return $values ?: [$min];
+    }
+
+    if ($type === 'GROUP_STAGE') {
+        $perGroup = arenagamer_group_stage_teams_per_group();
+        $values = [];
+        for ($v = $perGroup; $v <= 512; $v += $perGroup) {
+            if ($v >= $min) {
+                $values[] = $v;
+            }
+        }
+
+        return $values;
+    }
+
+    if (in_array($type, ['SINGLE_ELIMINATION', 'DOUBLE_ELIMINATION'], true)) {
+        $values = [];
+        for ($power = 2; $power <= 512; $power *= 2) {
+            if ($power >= $min) {
+                $values[] = $power;
+            }
+        }
+
+        return $values;
+    }
+
+    return null;
+}
+
+/**
+ * Opções válidas para o mínimo de participantes (≤ limite).
+ *
+ * @param array<int,int>|null $limitOptions
+ * @return array<int,int>
+ */
+function arenagamer_tournament_min_participant_options($limitOptions, $participantsLimit)
+{
+    $floor = arenagamer_tournament_min_participants();
+    $limit = max(0, (int) $participantsLimit);
+
+    if (is_array($limitOptions) && !empty($limitOptions)) {
+        $values = array_values(array_filter($limitOptions, static function ($value) use ($limit, $floor) {
+            $value = (int) $value;
+
+            return $value >= $floor && ($limit <= 0 || $value <= $limit);
+        }));
+
+        return $values ?: [$floor];
+    }
+
+    if ($limit < $floor) {
+        return [$floor];
+    }
+
+    $values = [];
+    for ($v = $floor; $v <= $limit; $v += $floor) {
+        $values[] = $v;
+    }
+
+    return $values ?: [$floor];
+}
+
+/**
+ * Valida mínimo de participantes em relação ao limite e às opções permitidas.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_min_participants_settings(array $payload, $plan = null)
+{
+    $min = (int) ($payload['minParticipants'] ?? 0);
+    $limit = (int) ($payload['participantsLimit'] ?? 0);
+    $floor = arenagamer_tournament_min_participants();
+
+    if ($min < $floor) {
+        return 'O mínimo de participantes deve ser pelo menos ' . $floor . '.';
+    }
+
+    if ($limit > 0 && $min > $limit) {
+        return 'O mínimo de participantes não pode ser maior que o limite (' . $limit . ').';
+    }
+
+    $type = strtoupper(trim((string) ($payload['type'] ?? '')));
+    $minTypeError = arenagamer_validate_tournament_participants_count_for_type(
+        $min,
+        $type,
+        'mínimo de participantes'
+    );
+    if ($minTypeError !== null) {
+        return $minTypeError;
+    }
+
+    return null;
 }
 
 /**
@@ -1812,6 +4739,16 @@ function arenagamer_validate_tournament_against_plan($plan, $participantsLimit, 
 {
     if (!arenagamer_plan_is_active($plan)) {
         return 'Plano ativo necessário para criar torneios.';
+    }
+
+    $participantsError = arenagamer_validate_tournament_participants_for_plan(
+        $plan,
+        $participantsLimit,
+        $prizeOptions['type'] ?? '',
+        $prizeOptions['teamsPerGroup'] ?? null
+    );
+    if ($participantsError !== null) {
+        return $participantsError;
     }
 
     $funding = strtoupper(trim((string) $prizeFunding));
@@ -2314,6 +5251,199 @@ function arenagamer_post_optional_int($input, $field)
 }
 
 /**
+ * Valida configuração de fase de grupos antes de enviar à API.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_group_stage_settings(array $payload)
+{
+    if (strtoupper(trim((string) ($payload['type'] ?? ''))) !== 'GROUP_STAGE') {
+        return null;
+    }
+
+    $teamsPerGroup = arenagamer_group_stage_teams_per_group();
+    $participantsLimit = $payload['participantsLimit'] ?? null;
+    if ($participantsLimit !== null && (int) $participantsLimit > 0) {
+        if ((int) $participantsLimit % $teamsPerGroup !== 0) {
+            $remainder = (int) $participantsLimit % $teamsPerGroup;
+            $add = $teamsPerGroup - $remainder;
+            $remove = $remainder;
+
+            return 'O limite de participantes (' . (int) $participantsLimit . ') deve ser múltiplo de '
+                . $teamsPerGroup . ' (participantes por grupo). '
+                . 'Escolha ' . ((int) $participantsLimit + $add) . ' ou ' . ((int) $participantsLimit - $remove) . '.';
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Texto resumido da configuração de fase de grupos para exibição.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_group_stage_summary(array $tournament)
+{
+    if (strtoupper(trim((string) ($tournament['type'] ?? ''))) !== 'GROUP_STAGE') {
+        return null;
+    }
+
+    $teamsPerGroup = arenagamer_group_stage_teams_per_group();
+    $advancePerGroup = arenagamer_group_stage_advance_per_group();
+    $groupsCount = arenagamer_tournament_group_stage_groups_count($tournament);
+    $isTeam = ($tournament['format'] ?? '') === 'TEAM';
+    $unit = $isTeam ? 'equipes' : 'participantes';
+
+    $summary = $teamsPerGroup . ' ' . $unit . ' por grupo, ' . $advancePerGroup . ' classificam por grupo';
+    if ($groupsCount > 0) {
+        $summary .= ', ' . arenagamer_group_stage_groups_count_label($groupsCount);
+    }
+
+    return $summary;
+}
+
+/**
+ * Dica exibida antes de gerar chaves em torneios com fase de grupos.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_bracket_group_stage_hint(array $tournament)
+{
+    if (strtoupper(trim((string) ($tournament['type'] ?? ''))) !== 'GROUP_STAGE') {
+        return null;
+    }
+
+    $teamsPerGroup = arenagamer_group_stage_teams_per_group();
+    $isTeam = ($tournament['format'] ?? '') === 'TEAM';
+    $unit = $isTeam ? 'equipes inscritas' : 'inscritos';
+
+    return 'O total de ' . $unit . ' deve ser múltiplo de ' . $teamsPerGroup
+        . ' (participantes por grupo). O número de grupos será calculado automaticamente.';
+}
+
+/**
+ * Valida configuração de pontos corridos + eliminatória antes de enviar à API.
+ *
+ * @return string|null
+ */
+function arenagamer_validate_tournament_round_robin_elimination_settings(array $payload)
+{
+    if (strtoupper(trim((string) ($payload['type'] ?? ''))) !== 'ROUND_ROBIN_ELIMINATION') {
+        return null;
+    }
+
+    $advanceToKnockout = $payload['advanceToKnockout'] ?? null;
+    $participantsLimit = (int) ($payload['participantsLimit'] ?? 0);
+
+    if ($advanceToKnockout === null || (int) $advanceToKnockout < 2) {
+        return 'Informe quantos classificam para o mata-mata (mínimo 2).';
+    }
+
+    $advanceToKnockout = (int) $advanceToKnockout;
+
+    if (!arenagamer_is_power_of_two($advanceToKnockout)) {
+        return 'Os classificados para o mata-mata devem ser 2, 4, 8, 16…';
+    }
+
+    if ($participantsLimit > 0 && $advanceToKnockout >= $participantsLimit) {
+        return 'Os classificados para o mata-mata devem ser menores que o total de inscritos ('
+            . $participantsLimit . ').';
+    }
+
+    return null;
+}
+
+/**
+ * Texto resumido da configuração pontos corridos + eliminatória.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_round_robin_elimination_summary(array $tournament)
+{
+    if (strtoupper(trim((string) ($tournament['type'] ?? ''))) !== 'ROUND_ROBIN_ELIMINATION') {
+        return null;
+    }
+
+    $advanceToKnockout = (int) ($tournament['advanceToKnockout'] ?? 0);
+    if ($advanceToKnockout < 2) {
+        return null;
+    }
+
+    $isTeam = ($tournament['format'] ?? '') === 'TEAM';
+    $unit = $isTeam ? 'equipes' : 'participantes';
+
+    return 'Pontos corridos (todos contra todos) — ' . $advanceToKnockout . ' ' . $unit
+        . ' classificam para o mata-mata';
+}
+
+/**
+ * Dica exibida antes de gerar chaves em torneios pontos corridos + eliminatória.
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_bracket_round_robin_elimination_hint(array $tournament)
+{
+    if (strtoupper(trim((string) ($tournament['type'] ?? ''))) !== 'ROUND_ROBIN_ELIMINATION') {
+        return null;
+    }
+
+    $advanceToKnockout = (int) ($tournament['advanceToKnockout'] ?? 0);
+    if ($advanceToKnockout < 2) {
+        return null;
+    }
+
+    return 'Será gerada apenas a fase de pontos corridos. Após todos os resultados, use Gerar mata-mata '
+        . 'para levar os ' . $advanceToKnockout . ' melhores colocados à eliminatória.';
+}
+
+/**
+ * Dica unificada antes de gerar chaves (grupos ou pontos corridos + eliminatória).
+ *
+ * @return string|null
+ */
+function arenagamer_tournament_bracket_hint(array $tournament)
+{
+    $groupHint = arenagamer_tournament_bracket_group_stage_hint($tournament);
+    if ($groupHint !== null) {
+        return $groupHint;
+    }
+
+    $swissHint = arenagamer_tournament_bracket_swiss_hint($tournament);
+    if ($swissHint !== null) {
+        return $swissHint;
+    }
+
+    $doubleElimHint = arenagamer_tournament_bracket_double_elimination_hint($tournament);
+    if ($doubleElimHint !== null) {
+        return $doubleElimHint;
+    }
+
+    return arenagamer_tournament_bracket_round_robin_elimination_hint($tournament);
+}
+
+/**
+ * Mensagem de confirmação ao gerar o mata-mata.
+ */
+function arenagamer_generate_knockout_confirm_message(array $tournament)
+{
+    $type = strtoupper(trim((string) ($tournament['type'] ?? '')));
+
+    if ($type === 'ROUND_ROBIN_ELIMINATION') {
+        $n = (int) ($tournament['advanceToKnockout'] ?? 0);
+
+        return 'Gerar o mata-mata com os ' . ($n > 0 ? $n : 'melhores')
+            . ' colocados da tabela de pontos corridos?';
+    }
+
+    if ($type === 'GROUP_STAGE') {
+        return 'Gerar o mata-mata com cruzamento inteligente entre grupos (evita confrontos do mesmo grupo na 1ª rodada)?';
+    }
+
+    return 'Gerar o mata-mata?';
+}
+
+/**
  * Monta payload de torneio para a API
  *
  * @param CI_Input $input
@@ -2352,7 +5482,6 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
         'prizeType'            => strtoupper(trim((string) ($input->post('prize_type') ?: 'MANUAL'))),
         'prizeFunding'         => strtoupper(trim((string) ($input->post('prize_funding') ?: 'FIXED'))),
         'prizePool'            => (float) str_replace(',', '.', (string) $input->post('prize_pool')),
-        'groupsCount'          => arenagamer_post_optional_int($input, 'groups_count'),
         'bestOf'               => arenagamer_post_optional_int($input, 'best_of'),
         'rules'                => trim((string) $input->post('rules')),
         'tiebreakerRules'      => trim((string) $input->post('tiebreaker_rules')),
@@ -2371,6 +5500,8 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
 
     if (!$isUpdate) {
         $payload['participantsLimit'] = max(2, (int) $input->post('participants_limit'));
+    } elseif (!empty($options['existing_tournament']['participantsLimit'])) {
+        $payload['participantsLimit'] = (int) $options['existing_tournament']['participantsLimit'];
     }
 
     if (($payload['format'] ?? '') === 'TEAM') {
@@ -2385,11 +5516,31 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
     }
 
     $payload['teamsPerGroup'] = null;
+    $payload['groupsCount'] = null;
+    $payload['advancePerGroup'] = null;
+    $payload['advanceToKnockout'] = null;
     if (($payload['type'] ?? '') === 'GROUP_STAGE') {
-        $payload['advancePerGroup'] = arenagamer_post_optional_int($input, 'advance_per_group');
-    } else {
-        $payload['groupsCount'] = null;
-        $payload['advancePerGroup'] = null;
+        $payload['teamsPerGroup'] = arenagamer_group_stage_teams_per_group();
+        $payload['advancePerGroup'] = arenagamer_group_stage_advance_per_group();
+        $groupStageError = arenagamer_validate_tournament_group_stage_settings($payload);
+        if ($groupStageError !== null) {
+            $payload['_group_stage_error'] = $groupStageError;
+        }
+    }
+    if (($payload['type'] ?? '') === 'ROUND_ROBIN_ELIMINATION') {
+        $payload['advanceToKnockout'] = arenagamer_post_optional_int($input, 'advance_to_knockout');
+        $rrError = arenagamer_validate_tournament_round_robin_elimination_settings($payload);
+        if ($rrError !== null) {
+            $payload['_round_robin_elimination_error'] = $rrError;
+        }
+    }
+
+    $minParticipantsError = arenagamer_validate_tournament_min_participants_settings(
+        $payload,
+        $options['plan'] ?? null
+    );
+    if ($minParticipantsError !== null) {
+        $payload['_min_participants_error'] = $minParticipantsError;
     }
 
     $prizeError = arenagamer_validate_tournament_prize_settings($payload);
@@ -2426,6 +5577,15 @@ function arenagamer_tournament_payload_from_input($input, $authUser = null, $pre
     }
 
     $existingTournament = is_array($options['existing_tournament'] ?? null) ? $options['existing_tournament'] : null;
+    $tournamentSystems = is_array($options['tournament_systems'] ?? null) ? $options['tournament_systems'] : null;
+    if ($tournamentSystems !== null) {
+        $existingType = $isUpdate && $existingTournament !== null ? ($existingTournament['type'] ?? null) : null;
+        $typeError = arenagamer_validate_tournament_system_type($payload['type'] ?? '', $tournamentSystems, $existingType);
+        if ($typeError !== null) {
+            $payload['_type_error'] = $typeError;
+        }
+    }
+
     if ($isUpdate && $existingTournament !== null) {
         $formatLockError = arenagamer_validate_tournament_format_locked_fields($existingTournament, $payload);
         if ($formatLockError !== null) {
@@ -2771,6 +5931,22 @@ function arenagamer_tournament_payload_error(array $payload)
         return (string) $payload['_format_lock_error'];
     }
 
+    if (!empty($payload['_type_error'])) {
+        return (string) $payload['_type_error'];
+    }
+
+    if (!empty($payload['_group_stage_error'])) {
+        return (string) $payload['_group_stage_error'];
+    }
+
+    if (!empty($payload['_round_robin_elimination_error'])) {
+        return (string) $payload['_round_robin_elimination_error'];
+    }
+
+    if (!empty($payload['_min_participants_error'])) {
+        return (string) $payload['_min_participants_error'];
+    }
+
     return null;
 }
 
@@ -2779,7 +5955,18 @@ function arenagamer_tournament_payload_error(array $payload)
  */
 function arenagamer_tournament_sanitize_payload(array $payload)
 {
-    unset($payload['_upload_error'], $payload['_date_error'], $payload['_preset_error'], $payload['_game_name_error'], $payload['_prize_error']);
+    unset(
+        $payload['_upload_error'],
+        $payload['_date_error'],
+        $payload['_preset_error'],
+        $payload['_game_name_error'],
+        $payload['_prize_error'],
+        $payload['_format_lock_error'],
+        $payload['_type_error'],
+        $payload['_group_stage_error'],
+        $payload['_round_robin_elimination_error'],
+        $payload['_min_participants_error']
+    );
 
     return $payload;
 }
@@ -2860,6 +6047,270 @@ function arenagamer_apply_tournament_image_uploads(array &$payload, $input = nul
     }
 
     return null;
+}
+
+/**
+ * Partida aguardando registro de resultado (ambos participantes definidos e não finalizada).
+ */
+function arenagamer_match_needs_result(array $match)
+{
+    $homeId = $match['homeParticipantId'] ?? null;
+    $awayId = $match['awayParticipantId'] ?? null;
+    $matchStatus = $match['status'] ?? '';
+    $bothDefined = !empty($homeId) && !empty($awayId);
+    $isFinished = in_array($matchStatus, ['COMPLETED', 'WALKOVER', 'CANCELLED'], true);
+
+    return $bothDefined && !$isFinished;
+}
+
+/**
+ * Partidas pendentes de resultado, ordenadas por grupo → rodada → número.
+ *
+ * @return array<int,array>
+ */
+function arenagamer_collect_pending_result_matches($matches)
+{
+    if (!is_array($matches)) {
+        return [];
+    }
+
+    $pending = [];
+    foreach ($matches as $match) {
+        if (is_array($match) && arenagamer_match_needs_result($match)) {
+            $pending[] = $match;
+        }
+    }
+
+    usort($pending, function ($a, $b) {
+        $groupOrder = arenagamer_match_group_number($a) <=> arenagamer_match_group_number($b);
+        if ($groupOrder !== 0) {
+            return $groupOrder;
+        }
+
+        $roundOrder = (int) ($a['roundNumber'] ?? 0) <=> (int) ($b['roundNumber'] ?? 0);
+        if ($roundOrder !== 0) {
+            return $roundOrder;
+        }
+
+        return (int) ($a['matchNumber'] ?? 0) <=> (int) ($b['matchNumber'] ?? 0);
+    });
+
+    return $pending;
+}
+
+/**
+ * Rótulo contextual da partida no assistente de resultados.
+ */
+function arenagamer_match_result_context_label(array $match)
+{
+    if (arenagamer_is_group_stage_match($match)) {
+        $groupNumber = arenagamer_match_group_number($match);
+
+        return $groupNumber > 0 ? 'Grupo ' . $groupNumber : 'Fase de grupos';
+    }
+
+    if (arenagamer_is_round_robin_match($match)) {
+        return 'Pontos corridos';
+    }
+
+    if (arenagamer_is_swiss_phase_match($match)) {
+        $roundNumber = (int) ($match['roundNumber'] ?? 0);
+
+        return $roundNumber > 0 ? 'Rodada suíça ' . $roundNumber : 'Sistema suíço';
+    }
+
+    if (arenagamer_is_knockout_match($match) || arenagamer_match_bracket_side($match) !== null) {
+        $roundNumber = (int) ($match['roundNumber'] ?? 0);
+
+        return arenagamer_knockout_round_label(
+            $match['roundType'] ?? '',
+            $match['phaseLabel'] ?? null,
+            $roundNumber > 0 ? $roundNumber : null
+        );
+    }
+
+    if (!empty($match['phaseLabel'])) {
+        return (string) $match['phaseLabel'];
+    }
+
+    return 'Partida #' . (int) ($match['matchNumber'] ?? 0);
+}
+
+/**
+ * Payload JSON para o assistente em lote de resultados.
+ *
+ * @return array<int,array<string,mixed>>
+ */
+function arenagamer_match_result_wizard_items($matches)
+{
+    $items = [];
+
+    foreach (arenagamer_collect_pending_result_matches($matches) as $match) {
+        $homeId = (int) ($match['homeParticipantId'] ?? 0);
+        $awayId = (int) ($match['awayParticipantId'] ?? 0);
+        $homeName = trim((string) ($match['homeParticipantName'] ?? ''));
+        $awayName = trim((string) ($match['awayParticipantName'] ?? ''));
+
+        if ($homeName === '') {
+            $homeName = 'Casa';
+        }
+        if ($awayName === '') {
+            $awayName = 'Visitante';
+        }
+
+        $items[] = [
+            'id'          => (int) ($match['id'] ?? 0),
+            'matchNumber' => (int) ($match['matchNumber'] ?? 0),
+            'context'     => arenagamer_match_result_context_label($match),
+            'homeId'      => $homeId,
+            'awayId'      => $awayId,
+            'homeName'    => $homeName,
+            'awayName'    => $awayName,
+            'scheduledAt' => !empty($match['scheduledAt'])
+                ? arenagamer_format_date($match['scheduledAt'], 'd/m/Y H:i')
+                : '',
+        ];
+    }
+
+    return $items;
+}
+
+/**
+ * Resposta JSON padronizada (Perfex / CodeIgniter).
+ */
+function arenagamer_json_response(array $payload, $statusCode = 200)
+{
+    $CI = &get_instance();
+    $CI->output
+        ->set_status_header((int) $statusCode)
+        ->set_content_type('application/json', 'utf-8')
+        ->set_output(json_encode($payload, JSON_UNESCAPED_UNICODE));
+    $CI->output->_display();
+    exit;
+}
+
+/**
+ * Indica se a requisição espera JSON (assistente em lote / AJAX).
+ */
+function arenagamer_request_wants_json()
+{
+    $CI = &get_instance();
+
+    return $CI->input->is_ajax_request() || $CI->input->post('ajax') === '1';
+}
+
+/**
+ * Processa POST de registro de resultado de partida.
+ *
+ * @param ArenaGamer_api $api
+ * @return array{success:bool,message:string,slug:string}
+ */
+function arenagamer_process_record_match_result($api, $matchId, $input, $canManageCallback = null)
+{
+    $slug = (string) $input->post('slug');
+    $winnerParticipantId = (int) $input->post('winner_participant_id');
+    $homeScore = $input->post('home_score');
+    $awayScore = $input->post('away_score');
+
+    if (!$matchId || $slug === '') {
+        return [
+            'success' => false,
+            'message' => 'Dados inválidos para registrar o resultado',
+            'slug'    => $slug,
+        ];
+    }
+
+    if ($homeScore === '' || $homeScore === null || $awayScore === '' || $awayScore === null) {
+        return [
+            'success' => false,
+            'message' => 'Informe o placar da partida',
+            'slug'    => $slug,
+        ];
+    }
+
+    $canManage = is_callable($canManageCallback)
+        ? (bool) call_user_func($canManageCallback, $slug)
+        : (bool) $api->can_manage_tournament($slug);
+
+    if (!$canManage) {
+        return [
+            'success' => false,
+            'message' => 'Sem permissão para gerenciar este torneio',
+            'slug'    => $slug,
+        ];
+    }
+
+    $proofUrl = '';
+    $proofUpload = arenagamer_handle_match_proof_upload('proof_file');
+    if (is_array($proofUpload) && isset($proofUpload['error'])) {
+        return [
+            'success' => false,
+            'message' => 'Erro no upload do comprovante: ' . $proofUpload['error'],
+            'slug'    => $slug,
+        ];
+    }
+    if (is_string($proofUpload)) {
+        $proofUrl = $proofUpload;
+    }
+
+    $result = $api->record_match_result($matchId, [
+        'winnerParticipantId' => $winnerParticipantId,
+        'homeScore'           => $homeScore,
+        'awayScore'           => $awayScore,
+        'proofUrl'            => $proofUrl,
+    ]);
+
+    if (arenagamer_api_is_success($result)) {
+        return [
+            'success' => true,
+            'message' => arenagamer_api_message($result, 'Resultado registrado com sucesso'),
+            'slug'    => $slug,
+        ];
+    }
+
+    return [
+        'success' => false,
+        'message' => 'Erro: ' . $api->get_last_error(),
+        'slug'    => $slug,
+    ];
+}
+
+/**
+ * Finaliza registro de resultado: redirect ou JSON conforme a requisição.
+ *
+ * @param ArenaGamer_api $api
+ */
+function arenagamer_finish_record_match_result($api, $matchId, $input, $redirectUrl, $canManageCallback = null, $onSuccess = null, $onFailure = null)
+{
+    $outcome = arenagamer_process_record_match_result($api, $matchId, $input, $canManageCallback);
+
+    if (arenagamer_request_wants_json()) {
+        $CI = &get_instance();
+        $payload = [
+            'success'  => $outcome['success'],
+            'message'  => $outcome['message'],
+            'csrfHash' => $CI->security->get_csrf_hash(),
+        ];
+        arenagamer_json_response($payload, $outcome['success'] ? 200 : 422);
+
+        return $outcome;
+    }
+
+    if ($outcome['success']) {
+        set_alert('success', $outcome['message']);
+        if (is_callable($onSuccess)) {
+            call_user_func($onSuccess, $matchId, $outcome);
+        }
+    } else {
+        set_alert('danger', $outcome['message']);
+        if (is_callable($onFailure)) {
+            call_user_func($onFailure, $matchId, $outcome);
+        }
+    }
+
+    redirect($redirectUrl($outcome['slug']));
+
+    return $outcome;
 }
 
 /**
@@ -3375,6 +6826,71 @@ function arenagamer_sync_contact_logout()
             log_activity('ArenaGamer logout sync error: ' . $e->getMessage());
         }
     }
+}
+
+/**
+ * URL do stylesheet do módulo (com cache bust).
+ */
+function arenagamer_stylesheet_url()
+{
+    $file = defined('ARENAGAMER_MODULE_PATH')
+        ? ARENAGAMER_MODULE_PATH . 'assets/css/arenagamer.css'
+        : '';
+    $ver = ($file !== '' && is_file($file)) ? filemtime($file) : time();
+
+    return module_dir_url(ARENAGAMER_MODULE_NAME, 'assets/css/arenagamer.css') . '?v=' . $ver;
+}
+
+/**
+ * Emite o link do CSS uma única vez por request.
+ */
+function arenagamer_enqueue_stylesheet()
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+    echo '<link rel="stylesheet" href="' . htmlspecialchars(arenagamer_stylesheet_url()) . '">' . "\n";
+}
+
+/**
+ * Rota atual é a área do cliente ArenaGamer (/arenagamer/...).
+ */
+function arenagamer_is_client_route()
+{
+    $CI = &get_instance();
+
+    return strtolower((string) $CI->uri->segment(1)) === 'arenagamer';
+}
+
+/**
+ * Rota atual é o painel staff ArenaGamer (/admin/arenagamer/...).
+ */
+function arenagamer_is_admin_route()
+{
+    $CI = &get_instance();
+
+    return strtolower((string) $CI->uri->segment(2)) === 'arenagamer';
+}
+
+/**
+ * Nome curto para exibição (IDs longos da API).
+ */
+function arenagamer_participant_display_label($name, $maxLength = 22)
+{
+    $name = trim((string) $name);
+    if ($name === '') {
+        return '—';
+    }
+    if (function_exists('mb_strlen') && mb_strlen($name) > $maxLength) {
+        return mb_substr($name, 0, $maxLength - 1) . '…';
+    }
+    if (strlen($name) > $maxLength) {
+        return substr($name, 0, $maxLength - 1) . '…';
+    }
+
+    return $name;
 }
 
 /**

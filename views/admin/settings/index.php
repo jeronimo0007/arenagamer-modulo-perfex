@@ -202,6 +202,60 @@
 
                         <hr />
 
+                        <h4 class="tw-font-semibold mtop15 mbot15">Modos de torneio</h4>
+                        <p class="text-muted">
+                            Controle quais sistemas aparecem na criação de novos torneios.
+                            Torneios já existentes continuam funcionando normalmente, mesmo com o modo desabilitado.
+                        </p>
+
+                        <?php
+                        $tournamentSystems = is_array($tournament_systems ?? null) ? $tournament_systems : arenagamer_tournament_systems_default();
+                        ?>
+
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Modo</th>
+                                        <th class="text-center" style="width:120px;">Habilitado</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($tournamentSystems as $system): ?>
+                                    <?php
+                                    $systemType = strtoupper(trim((string) ($system['type'] ?? '')));
+                                    if ($systemType === '') {
+                                        continue;
+                                    }
+                                    $systemLabel = trim((string) ($system['label'] ?? '')) ?: arenagamer_tournament_type_label($systemType);
+                                    $systemEnabled = !empty($system['enabled']);
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <strong><?php echo htmlspecialchars($systemLabel); ?></strong>
+                                            <br><small class="text-muted"><?php echo htmlspecialchars($systemType); ?></small>
+                                        </td>
+                                        <td class="text-center">
+                                            <input type="hidden" name="tournament_system_<?php echo htmlspecialchars($systemType); ?>" value="0">
+                                            <input type="checkbox"
+                                                   name="tournament_system_<?php echo htmlspecialchars($systemType); ?>"
+                                                   value="1"
+                                                <?php echo $systemEnabled ? 'checked' : ''; ?>>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="alert alert-info">
+                            Desabilitar um modo impede novos torneios desse tipo. Exemplo na API:
+                            <code>PATCH /admin/tournament-systems/DOUBLE_ELIMINATION</code> com
+                            <code>{"enabled": false}</code>.
+                        </div>
+
+                        <hr />
+
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" name="auto_sync" value="1"

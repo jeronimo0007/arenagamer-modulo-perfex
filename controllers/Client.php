@@ -21,6 +21,7 @@ class Client extends ClientsController
 
         $this->load->helper('arenagamer/arenagamer');
         $this->load->model('arenagamer/arenagamer_model');
+        hooks()->add_action('app_customers_head', 'arenagamer_enqueue_stylesheet');
         $this->api = arenagamer_contact_api();
 
         // Sincroniza JWT apenas ao entrar na área ArenaGamer (não bloqueia login do portal)
@@ -159,10 +160,13 @@ class Client extends ClientsController
         $data['tournament_pricing'] = arenagamer_api_data($pricingResponse, arenagamer_tournament_pricing_local());
         $walletResponse = $this->api->get_wallet_balance();
         $data['wallet'] = arenagamer_api_is_success($walletResponse) ? arenagamer_api_data($walletResponse) : null;
+        $tournamentSystems = arenagamer_resolve_tournament_systems($this->api, true);
 
         if ($this->input->post()) {
             $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, [
-                'api' => $this->api,
+                'api'                 => $this->api,
+                'plan'                => $data['current_plan'],
+                'tournament_systems'  => $tournamentSystems,
             ]);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
@@ -170,9 +174,7 @@ class Client extends ClientsController
                 set_alert('danger', $payloadError);
                 $data['tournament'] = arenagamer_tournament_from_post($this->input, $data['auth_user'], $data['presets'] ?? null);
                 $data['api_error'] = $payloadError;
-                $this->data($data);
-                $this->view('client/tournaments/form');
-                $this->layout();
+                $this->render_tournament_form($data);
                 return;
             }
             $payload = arenagamer_tournament_sanitize_payload($payload);
@@ -180,9 +182,7 @@ class Client extends ClientsController
             if (empty($payload['name'])) {
                 set_alert('danger', 'O nome do torneio é obrigatório');
                 $data['tournament'] = arenagamer_tournament_from_post($this->input, $data['auth_user'], $data['presets'] ?? null);
-                $this->data($data);
-                $this->view('client/tournaments/form');
-                $this->layout();
+                $this->render_tournament_form($data);
                 return;
             }
 
@@ -193,8 +193,10 @@ class Client extends ClientsController
                 $data['tournament_pricing'],
                 $payload['prizeFunding'] ?? 'FIXED',
                 [
-                    'prizeType' => $payload['prizeType'] ?? 'MANUAL',
-                    'prizePool' => $payload['prizePool'] ?? 0,
+                    'prizeType'      => $payload['prizeType'] ?? 'MANUAL',
+                    'prizePool'      => $payload['prizePool'] ?? 0,
+                    'type'           => $payload['type'] ?? '',
+                    'teamsPerGroup'  => $payload['teamsPerGroup'] ?? null,
                 ]
             );
 
@@ -202,9 +204,7 @@ class Client extends ClientsController
                 set_alert('danger', $planError);
                 $data['tournament'] = arenagamer_tournament_from_post($this->input, $data['auth_user'], $data['presets'] ?? null);
                 $data['api_error'] = $planError;
-                $this->data($data);
-                $this->view('client/tournaments/form');
-                $this->layout();
+                $this->render_tournament_form($data);
                 return;
             }
 
@@ -224,9 +224,7 @@ class Client extends ClientsController
                 set_alert('danger', $walletError);
                 $data['tournament'] = arenagamer_tournament_from_post($this->input, $data['auth_user'], $data['presets'] ?? null);
                 $data['api_error'] = $walletError;
-                $this->data($data);
-                $this->view('client/tournaments/form');
-                $this->layout();
+                $this->render_tournament_form($data);
                 return;
             }
 
@@ -248,9 +246,7 @@ class Client extends ClientsController
             $data['api_error'] = $this->api->get_last_error();
         }
 
-        $this->data($data);
-        $this->view('client/tournaments/form');
-        $this->layout();
+        $this->render_tournament_form($data);
     }
 
     public function tournament_edit($slug = '')
@@ -288,8 +284,15 @@ class Client extends ClientsController
             redirect(arenagamer_client_url('tournament_detail/' . $slug));
         }
 
+        $tournamentSystems = arenagamer_resolve_tournament_systems($this->api, true);
+
         if ($this->input->post()) {
-            $updateOptions = ['is_update' => true, 'api' => $this->api, 'existing_tournament' => $data['tournament']];
+            $updateOptions = [
+                'is_update'          => true,
+                'api'                => $this->api,
+                'existing_tournament'=> $data['tournament'],
+                'tournament_systems' => $tournamentSystems,
+            ];
             $payload = arenagamer_tournament_payload_from_input($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions);
             $payloadError = arenagamer_tournament_payload_error($payload);
 
@@ -297,9 +300,7 @@ class Client extends ClientsController
                 set_alert('danger', $payloadError);
                 $data['tournament'] = array_merge($data['tournament'], arenagamer_tournament_from_post($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions));
                 $data['api_error'] = $payloadError;
-                $this->data($data);
-                $this->view('client/tournaments/form');
-                $this->layout();
+                $this->render_tournament_form($data);
                 return;
             }
             $payload = arenagamer_tournament_sanitize_payload($payload);
@@ -307,9 +308,7 @@ class Client extends ClientsController
             if (empty($payload['name'])) {
                 set_alert('danger', 'O nome do torneio é obrigatório');
                 $data['tournament'] = array_merge($data['tournament'], arenagamer_tournament_from_post($this->input, $data['auth_user'], $data['presets'] ?? null, $updateOptions));
-                $this->data($data);
-                $this->view('client/tournaments/form');
-                $this->layout();
+                $this->render_tournament_form($data);
                 return;
             }
 
@@ -325,9 +324,7 @@ class Client extends ClientsController
             $data['api_error'] = $this->api->get_last_error();
         }
 
-        $this->data($data);
-        $this->view('client/tournaments/form');
-        $this->layout();
+        $this->render_tournament_form($data);
     }
 
     public function public_tournaments()
@@ -353,7 +350,15 @@ class Client extends ClientsController
     {
         $data['title'] = 'Torneio';
         $data['tournament'] = $this->api->get_tournament($slug);
-        $data['matches'] = $this->api->get_tournament_matches($slug);
+        $matchesListQuery = arenagamer_tournament_matches_list_query($this->input);
+        $data['match_filters'] = $matchesListQuery['filters'];
+        $data['match_view'] = $matchesListQuery['view'];
+        $data['matches_response'] = $this->api->get_tournament_matches($slug, $data['match_filters']);
+        $data['matches'] = [
+            'data'       => arenagamer_paginated_content($data['matches_response']),
+            'pagination' => arenagamer_pagination_meta($data['matches_response']),
+        ];
+        $data['all_matches'] = arenagamer_fetch_all_tournament_matches($this->api, $slug);
         $data['standings'] = $this->api->get_tournament_standings($slug);
         $data['can_manage'] = $this->api->can_manage_tournament($slug);
         $data['auth_user'] = $this->api->get_auth_user();
@@ -459,54 +464,16 @@ class Client extends ClientsController
 
     public function record_match_result($matchId)
     {
-        $slug = $this->input->post('slug');
-        $winnerParticipantId = (int) $this->input->post('winner_participant_id');
-        $homeScore = $this->input->post('home_score');
-        $awayScore = $this->input->post('away_score');
-
-        if (!$matchId || !$slug) {
-            set_alert('danger', 'Dados inválidos para registrar o resultado');
-            redirect($slug ? arenagamer_client_url('tournament_detail/' . $slug) : arenagamer_client_url('tournaments'));
-            return;
-        }
-
-        if ($homeScore === '' || $homeScore === null || $awayScore === '' || $awayScore === null) {
-            set_alert('danger', 'Informe o placar da partida');
-            redirect(arenagamer_client_url('tournament_detail/' . $slug));
-            return;
-        }
-
-        if (!$this->api->can_manage_tournament($slug)) {
-            set_alert('danger', 'Sem permissão para gerenciar este torneio');
-            redirect(arenagamer_client_url('tournament_detail/' . $slug));
-            return;
-        }
-
-        $proofUrl = '';
-        $proofUpload = arenagamer_handle_match_proof_upload('proof_file');
-        if (is_array($proofUpload) && isset($proofUpload['error'])) {
-            set_alert('danger', 'Erro no upload do comprovante: ' . $proofUpload['error']);
-            redirect(arenagamer_client_url('tournament_detail/' . $slug));
-            return;
-        }
-        if (is_string($proofUpload)) {
-            $proofUrl = $proofUpload;
-        }
-
-        $result = $this->api->record_match_result($matchId, [
-            'winnerParticipantId' => $winnerParticipantId,
-            'homeScore'           => $homeScore,
-            'awayScore'           => $awayScore,
-            'proofUrl'            => $proofUrl,
-        ]);
-
-        if (arenagamer_api_is_success($result)) {
-            set_alert('success', arenagamer_api_message($result, 'Resultado registrado com sucesso'));
-        } else {
-            set_alert('danger', 'Erro: ' . $this->api->get_last_error());
-        }
-
-        redirect(arenagamer_client_url('tournament_detail/' . $slug));
+        arenagamer_finish_record_match_result(
+            $this->api,
+            $matchId,
+            $this->input,
+            function ($slug) {
+                return $slug
+                    ? arenagamer_client_url('tournament_detail/' . $slug)
+                    : arenagamer_client_url('tournaments');
+            }
+        );
     }
 
     public function join_tournament($slug)
@@ -1097,5 +1064,16 @@ class Client extends ClientsController
             'success' => true,
             'data'    => $items,
         ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     */
+    private function render_tournament_form(array $data)
+    {
+        arenagamer_assign_tournament_form_systems($data, $this->api, true);
+        $this->data($data);
+        $this->view('client/tournaments/form');
+        $this->layout();
     }
 }
